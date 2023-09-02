@@ -1668,3 +1668,4 @@ ggplot(long_df, aes(x = TIM3, y = Value)) +
   geom_smooth(method = "lm", se = TRUE, aes(color = "black")) +  # se=TRUE adds the confidence interval
   facet_wrap(~ Marker) +
   theme_minimal()
+# ESPERAREMOS LOS VIENTOS INVERNALES
