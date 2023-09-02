@@ -23,7 +23,7 @@ library(SPIAT)
 
 ############################################ DATA READING AND FORMATTING ---------------------------------------------
 ## 1.1. READING IN DATA ----
-raw_measurements <- read.table("QuPath/measurementsP2.tsv", header = TRUE, sep = "\t")
+raw_measurements <- read.table("measurements.tsv", header = TRUE, sep = "\t")
 responses <- read.csv("Responses.csv", header = TRUE, sep = ",")
 
 ## 1.2. FORMATTING FOR EDA ----
@@ -1053,42 +1053,92 @@ for (patient_id in unique(responses$ID)) {
   grouped_quadrats[[as.character(patient_id)]] <- grouped_patient_data
 }
 
-selected_image <- SPIAT_tifs[1] # Select image for visuals (1-90) ----
-# VISUALS - Point patterns per ID faceted by marker ----
-par(mfrow = c(2, 3))
-for (marker in immune_markers) {
-  marker_ppp <- pointpatterns[[selected_image]][[marker]]
-  plot(marker_ppp, pch = '.', main = marker)
+# PROCESSING - Aggregation by response group ----
+grouped_by_response <- list()
+
+for (response_group in unique(responses$Response)) {
+  
+  # Initialize an empty list to store the grouped data for the current response group
+  grouped_response_data <- list()
+  
+  # Find the patient IDs corresponding to the current response group
+  patient_ids <- unique(responses$ID[responses$Response == response_group])
+  
+  # Loop through each patient ID for the current response group
+  for (patient_id in patient_ids) {
+    
+    # Extract the data for the current patient
+    patient_data <- grouped_quadrats[[as.character(patient_id)]]
+    
+    # Loop through each marker in the patient data
+    for (marker in names(patient_data)) {
+      
+      # Append the counts for the current marker and patient to the list
+      grouped_response_data[[marker]] <- append(grouped_response_data[[marker]], list(patient_data[[marker]]))
+    }
+  }
+  
+  # Now, aggregate each marker by the median
+  for (marker in names(grouped_response_data)) {
+    
+    # Combine all the counts for this marker into a matrix
+    marker_matrix <- do.call(rbind, lapply(grouped_response_data[[marker]], function(x) attributes(x)$quadratcount))
+    
+    # Calculate the median for each quadrant
+    mean_val <- apply(marker_matrix, 2, mean, na.rm = TRUE)
+    
+    # Create a new quadratcount object with the median values but retaining the owin object and tess attributes
+    new_quadrat <- grouped_response_data[[marker]][[1]]
+    attributes(new_quadrat)$quadratcount <- mean_val
+    
+    # Store the new quadrat object in the list
+    grouped_response_data[[marker]] <- new_quadrat
+  }
+  
+  # Store the grouped and aggregated data for the current response group in the main list
+  grouped_by_response[[response_group]] <- grouped_response_data
 }
 
-# VISUALS - Density maps ----
 par(mfrow = c(2, 3), mar = c(1,1,1,1))
-for (marker in immune_markers) {
+for (response_group in names(grouped_by_response)) {
   
-  # Retrieve the density maps for the selected image
-  dmap <- density_maps[[selected_image]][[marker]]
-  marker_ppp <- pointpatterns[[selected_image]][[marker]]
-  
-  plot(dmap, 
-       main = marker, 
-       col = colorRampPalette(c("white", 
-                                "cyan", 
-                                "limegreen", 
-                                "yellow", 
-                                "firebrick2")))
-  
-  plot(marker_ppp, 
-       add = T, 
-       pch = ".",
-       use.marks = TRUE)
-  
-  contour(dmap, 
-          labels = NULL, 
-          add = TRUE,
-          col = "black",
-          method = "flattest")
+  for (marker in immune_markers) {
+    
+    # Retrieve the density maps for the selected response group
+    Q <- grouped_by_response[[response_group]][[marker]]
+    
+    # Extract quadrat information
+    counts <- as.vector(attributes(Q)$quadratcount)
+    tiles <- attr(Q, "tess")$tiles
+    
+    # Create a color palette
+    cols <- colorRampPalette(c("white", 
+                               "cyan", 
+                               "limegreen", 
+                               "yellow", 
+                               "firebrick2"))(length(unique(counts)))
+    
+    # Plot the window
+    plot(attr(Q, "tess")$window, main = print(paste(marker, "-", response_group)))
+    
+    # Loop through each tile to draw and color it
+    for (i in 1:length(tiles)) {
+      tile <- tiles[[i]]
+      count <- counts[i]
+      
+      # Get the color for this count
+      col_idx <- findInterval(count, sort(unique(counts)))
+      
+      # Draw the tile
+      plot(tile, add = TRUE, col = cols[col_idx], border = "black")
+    }
+    
+    plot.quadratcount(Q, add = T, entries = as.vector(round(attributes(Q)$quadratcount, 4)))
+    
+  }
   
 }
+selected_image <- SPIAT_tifs[1] # Select image for visuals (1-90) ----
 # VISUALS - Sampler density maps ----
 # Define the order of response groups and immune markers
 response_order <- c("SD", "PD", "CR", "PR")
@@ -1165,67 +1215,6 @@ for (marker in marker_order) {
     }
   }
 }
-# VISUALS - CR density maps ----
-# Filter the responses data frame to only include patients in the CR group
-cr_patients <- responses[responses$Response == "CR", ]
-
-# Initialize an empty list to store the CR group's point patterns
-group_ppp <- list()
-group_densities <- list()
-group_contour <- list()
-
-# Loop through each patient ID in the CR group
-for (patient_id in cr_patients$ID) {
-  
-  # Find the image names corresponding to the current patient ID
-  image_names <- unlist(responses$image_names[responses$ID == patient_id])
-  
-  # Loop through each image name for the current patient
-  for (image_name in image_names) {
-    
-    # Extract the data for the current image
-    gppp <- pointpatterns[[image_name]]
-    dmap <- density_maps[[image_name]]
-    gcont <- density_maps[[image_name]]
-    
-    # Store the point patterns in the list
-    group_ppp[[paste(image_name)]] <- gppp
-    group_densities[[paste(image_name)]] <- dmap
-    group_contour[[paste(image_name)]] <- gcont
-  }
-}
-
-# Plotting
-par(mfrow = c(6, length(group_ppp)), mar = c(1,1,1,1), bty = "n") # 6 rows for markers, columns for images
-for (marker in immune_markers) {
-  for (image_name in names(group_ppp)) {
-    
-    # Extract the point pattern for the current image and marker
-    f_ppp <- group_ppp[[image_name]][[marker]]
-    f_densities <- group_densities[[image_name]][[marker]]
-    f_contour <- group_contour[[image_name]][[marker]]
-    
-    # Plot the point pattern
-    plot(f_densities, 
-         col = colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2")), 
-         main = gsub(".*_([0-9]+)\\.tif$", "\\1", image_name),
-         axes = 0,
-         box = FALSE)
-    
-    contour(f_contour,
-            add = T,
-            labels = NULL,
-            axes = 0,
-            box = FALSE,
-            nlevels = 4)
-    
-    # Add titles and labels
-    if (image_name == names(group_ppp)[1]) {
-      mtext(marker, side = 2, line = 0, cex = 1)
-    }
-  }
-}
-
 # VISUALS - Quadrat plots ----
 par(mfrow = c(2, 3))
 for (marker in immune_markers) {
@@ -1253,17 +1242,178 @@ for (marker in immune_markers) {
   
 }
 
-px <- as.character(SPIAT_px[41]) # Select patient for visuals (1-46)----
-# VISUALS - Quadrat proportion per ID ----
-par(mfrow = c(2, 3))
-for (marker in immune_markers) {
+# VISUALS - Results ----
+# Define the order of response groups and immune markers
+response_order <- c("SD", "PD", "CR", "PR")
+marker_order <- c("LAG3", "CD3", "TIM3", "CK", "PD1","CD8")
+
+# Initialize plotting layout
+par(mfrow = c(6, 4), mar = c(0, 4, 2, 0), bty = "n", oma = c(0, 0, 4, 0)) # 6 rows for markers, 4 columns for response groups
+
+# Initialize variables to track the current row and column
+current_row <- 1
+# current_col <- 1
+
+# Loop through each immune marker in the specified order
+for (marker in marker_order) {
   
-  # Retrieve the density maps for the selected image
-  Q <- grouped_quadrats[[px]][[marker]]
+  # Reset the current column counter for each new row
+  current_col <- 1
   
-  plot.quadratcount(Q, main = print(paste(marker, "-", round(sum(Q), 3))), entries = as.vector(attributes(Q)$quadratcount))
+  # Loop through each response group in the specified order
+  for (response_group in response_order) {
+    
+    # Retrieve the density maps for the selected response group and marker
+    Q <- grouped_by_response[[response_group]][[marker]]
+    
+    # Extract quadrat information
+    counts <- as.vector(round(attributes(Q)$quadratcount,3))
+    tiles <- attr(Q, "tess")$tiles
+    
+    # Create a color palette
+    cols <- colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2"))(length(unique(counts)))
+    
+    # Plot the window
+    plot(attr(Q, "tess")$window, main = NULL, axes = 0, box = FALSE)
+    
+    # Loop through each tile to draw and color it
+    for (i in 1:length(tiles)) {
+      tile <- tiles[[i]]
+      count <- counts[i]
+      
+      # Get the color for this count
+      col_idx <- findInterval(count, sort(unique(counts)))
+      
+      # Draw the tile
+      plot(tile, add = TRUE, col = cols[col_idx], border = "black")
+    }
+    # 
+    # # Overlay the counts
+    # plot.quadratcount(Q, add = TRUE, main = paste(marker,"-",response_group), entries = round(attributes(Q)$quadratcount,3))
+    
+    if (response_group == response_order[1]) {
+      mtext(marker, side = 2, line = 2, adj = 1, cex = 1)
+    }
+  }
   
+  # Increment the current row
+  current_row <- current_row + 1
 }
+
+# Add the response group names above each column
+column_positions <- seq(1/8, 1, by = 1/4)
+mtext(response_order, side = 3, line = -1, outer = TRUE, at = column_positions, cex = 1)
+# STATS - Kruskall wallis with bonferroni correction ----
+# Initialize an empty data frame to store the summary statistics
+summary_table <- data.frame()
+
+# Loop through each marker
+for (marker in names(grouped_quadrats[[1]])) {
+  
+  # Initialize an empty list to store the data for Kruskal-Wallis and Levene's tests
+  all_data <- list()
+  
+  # Loop through each unique response
+  for (response_group in unique(responses$Response)) {
+    
+    # Get IDs belonging to the current response group
+    patient_ids <- unique(responses$ID[responses$Response == response_group])
+    
+    # Extract the data for the current marker and response group
+    marker_data <- lapply(patient_ids, function(id) grouped_quadrats[[as.character(id)]][[marker]])
+    
+    # Assuming each element in marker_data is a vector, bind them into a matrix
+    marker_matrix <- do.call(rbind, marker_data)
+    
+    # Store the data for later use in Kruskal-Wallis test
+    all_data[[as.character(response_group)]] <- marker_matrix
+  }
+  
+  # Combine all the matrices into one large matrix
+  combined_matrix <- do.call(rbind, all_data)
+  
+  # Create a group vector for Kruskal-Wallis test
+  group_vector <- as.vector(rep(names(all_data), sapply(all_data, nrow)))
+  
+  # Perform Kruskal-Wallis and Levene's tests for each bin (column in combined_matrix)
+  for (bin_index in 1:ncol(combined_matrix)) {
+    
+    # Data for the current bin
+    bin_data <- combined_matrix[, bin_index]
+    
+    # Perform Levene's test
+    levene_result <- leveneTest(y = bin_data, group = group_vector)$`Pr(>F)`[1]
+    
+    # Perform Kruskal-Wallis test
+    kw_result <- kruskal.test(bin_data ~ group_vector)$p.value
+    
+    # Create a temporary data frame to store the results
+    temp_df <- data.frame(
+      Marker = marker,
+      Bin = bin_index,
+      Levene_p_value = levene_result,
+      KW_p_value = kw_result
+    )
+    
+    # Append to the summary table
+    summary_table <- rbind(summary_table, temp_df)
+  }
+}
+
+# Perform FDR correction for Kruskal-Wallis p-values
+summary_table <- summary_table %>% 
+  mutate(FDR_adj_p_value = p.adjust(KW_p_value, method = "bonferroni"))
+
+# Sort the summary table by FDR-adjusted p-values
+summary_table <- summary_table %>% 
+  arrange(FDR_adj_p_value)
+
+# Print the summary table
+print(summary_table)
+# STATS - Dunn test ----
+# Initialize an empty data frame to store the Dunn's test results
+dunn_results <- data.frame()
+
+for (i in 1:nrow(summary_table)) {
+  if (!is.na(summary_table$KW_p_value[i]) && summary_table$KW_p_value[i] < 0.05) {
+    marker_bin <- summary_table[i, c("Marker", "Bin"), drop = FALSE]
+    
+    # Extract the marker and bin index
+    marker <- marker_bin$Marker
+    bin_index <- marker_bin$Bin
+    
+    # Extract the data for the current bin
+    bin_data <- combined_matrix[, bin_index]
+    
+    # Create a temporary data frame for this marker and bin
+    temp_data <- data.frame(Value = bin_data, Response = as.factor(group_vector))
+    
+    # Perform Dunn's test
+    dunn_result <- dunnTest(Value ~ Response, data = temp_data, method = "bonferroni")
+    
+    # Create a temporary data frame to store the results
+    temp_df <- data.frame(
+      Marker = rep(marker, nrow(dunn_result$res)),
+      Bin = rep(bin_index, nrow(dunn_result$res)),
+      Comparison = dunn_result$res$Comparison,
+      Z = dunn_result$res$Z,
+      P = dunn_result$res$`P.unadj`,
+      Adj_P = dunn_result$res$`P.adj`
+    )
+    
+    # Append to the Dunn's test results table
+    dunn_results <- rbind(dunn_results, temp_df)
+  }else{
+    print(paste("Error encountered in:", i))
+  }
+}
+
+# Sort the summary table by FDR-adjusted p-values
+dunn_results <- dunn_results %>% 
+  arrange(Adj_P)
+
+# Print the Dunn's test results
+print(dunn_results)
 # STATS - Bandwidth testing ----
 # Function to calculate optimal bandwidths for each image
 calculate_bandwidths <- function(df) {
@@ -1820,260 +1970,4 @@ for (n_bins in 15:100) {
   print(paste(n_bins, "bins test completed."))
 }
 
-# Kruskall-Wallis ----
-# Initialize an empty data frame to store the summary statistics
-summary_table <- data.frame()
 
-# Loop through each marker
-for (marker in names(grouped_quadrats[[1]])) {
-  
-  # Initialize an empty list to store the data for Kruskal-Wallis and Levene's tests
-  all_data <- list()
-  
-  # Loop through each unique response
-  for (response_group in unique(responses$Response)) {
-    
-    # Get IDs belonging to the current response group
-    patient_ids <- unique(responses$ID[responses$Response == response_group])
-    
-    # Extract the data for the current marker and response group
-    marker_data <- lapply(patient_ids, function(id) grouped_quadrats[[as.character(id)]][[marker]])
-    
-    # Assuming each element in marker_data is a vector, bind them into a matrix
-    marker_matrix <- do.call(rbind, marker_data)
-    
-    # Store the data for later use in Kruskal-Wallis test
-    all_data[[as.character(response_group)]] <- marker_matrix
-  }
-  
-  # Combine all the matrices into one large matrix
-  combined_matrix <- do.call(rbind, all_data)
-  
-  # Create a group vector for Kruskal-Wallis test
-  group_vector <- as.vector(rep(names(all_data), sapply(all_data, nrow)))
-  
-  # Perform Kruskal-Wallis and Levene's tests for each bin (column in combined_matrix)
-  for (bin_index in 1:ncol(combined_matrix)) {
-    
-    # Data for the current bin
-    bin_data <- combined_matrix[, bin_index]
-    
-    # Perform Levene's test
-    levene_result <- leveneTest(y = bin_data, group = group_vector)$`Pr(>F)`[1]
-    
-    # Perform Kruskal-Wallis test
-    kw_result <- kruskal.test(bin_data ~ group_vector)$p.value
-    
-    # Create a temporary data frame to store the results
-    temp_df <- data.frame(
-      Marker = marker,
-      Bin = bin_index,
-      Levene_p_value = levene_result,
-      KW_p_value = kw_result
-    )
-    
-    # Append to the summary table
-    summary_table <- rbind(summary_table, temp_df)
-  }
-}
-
-# Perform FDR correction for Kruskal-Wallis p-values
-summary_table <- summary_table %>% 
-  mutate(FDR_adj_p_value = p.adjust(KW_p_value, method = "bonferroni"))
-
-# Sort the summary table by FDR-adjusted p-values
-summary_table <- summary_table %>% 
-  arrange(FDR_adj_p_value)
-
-# Print the summary table
-print(summary_table)
-# Dunn-test ----
-# Initialize an empty data frame to store the Dunn's test results
-dunn_results <- data.frame()
-
-for (i in 1:nrow(summary_table)) {
-  if (!is.na(summary_table$KW_p_value[i]) && summary_table$KW_p_value[i] < 0.05) {
-    marker_bin <- summary_table[i, c("Marker", "Bin"), drop = FALSE]
-  
-  # Extract the marker and bin index
-  marker <- marker_bin$Marker
-  bin_index <- marker_bin$Bin
-  
-  # Extract the data for the current bin
-  bin_data <- combined_matrix[, bin_index]
-  
-  # Create a temporary data frame for this marker and bin
-  temp_data <- data.frame(Value = bin_data, Response = as.factor(group_vector))
-  
-  # Perform Dunn's test
-  dunn_result <- dunnTest(Value ~ Response, data = temp_data, method = "bonferroni")
-  
-  # Create a temporary data frame to store the results
-  temp_df <- data.frame(
-    Marker = rep(marker, nrow(dunn_result$res)),
-    Bin = rep(bin_index, nrow(dunn_result$res)),
-    Comparison = dunn_result$res$Comparison,
-    Z = dunn_result$res$Z,
-    P = dunn_result$res$`P.unadj`,
-    Adj_P = dunn_result$res$`P.adj`
-  )
-  
-  # Append to the Dunn's test results table
-  dunn_results <- rbind(dunn_results, temp_df)
-    }else{
-      print(paste("Error encountered in:", i))
-    }
-}
-
-# Sort the summary table by FDR-adjusted p-values
-dunn_results <- dunn_results %>% 
-  arrange(Adj_P)
-
-# Print the Dunn's test results
-print(dunn_results)
-# Preliminar plot ----
-grouped_by_response <- list()
-
-for (response_group in unique(responses$Response)) {
-  
-  # Initialize an empty list to store the grouped data for the current response group
-  grouped_response_data <- list()
-  
-  # Find the patient IDs corresponding to the current response group
-  patient_ids <- unique(responses$ID[responses$Response == response_group])
-  
-  # Loop through each patient ID for the current response group
-  for (patient_id in patient_ids) {
-    
-    # Extract the data for the current patient
-    patient_data <- grouped_quadrats[[as.character(patient_id)]]
-    
-    # Loop through each marker in the patient data
-    for (marker in names(patient_data)) {
-      
-      # Append the counts for the current marker and patient to the list
-      grouped_response_data[[marker]] <- append(grouped_response_data[[marker]], list(patient_data[[marker]]))
-    }
-  }
-  
-  # Now, aggregate each marker by the median
-  for (marker in names(grouped_response_data)) {
-    
-    # Combine all the counts for this marker into a matrix
-    marker_matrix <- do.call(rbind, lapply(grouped_response_data[[marker]], function(x) attributes(x)$quadratcount))
-    
-    # Calculate the median for each quadrant
-    mean_val <- apply(marker_matrix, 2, mean, na.rm = TRUE)
-    
-    # Create a new quadratcount object with the median values but retaining the owin object and tess attributes
-    new_quadrat <- grouped_response_data[[marker]][[1]]
-    attributes(new_quadrat)$quadratcount <- mean_val
-    
-    # Store the new quadrat object in the list
-    grouped_response_data[[marker]] <- new_quadrat
-  }
-  
-  # Store the grouped and aggregated data for the current response group in the main list
-  grouped_by_response[[response_group]] <- grouped_response_data
-}
-
-par(mfrow = c(2, 3), mar = c(1,1,1,1))
-for (response_group in names(grouped_by_response)) {
-
-  for (marker in immune_markers) {
-    
-    # Retrieve the density maps for the selected response group
-    Q <- grouped_by_response[[response_group]][[marker]]
-    
-    # Extract quadrat information
-    counts <- as.vector(attributes(Q)$quadratcount)
-    tiles <- attr(Q, "tess")$tiles
-    
-    # Create a color palette
-    cols <- colorRampPalette(c("white", 
-                               "cyan", 
-                               "limegreen", 
-                               "yellow", 
-                               "firebrick2"))(length(unique(counts)))
-    
-    # Plot the window
-    plot(attr(Q, "tess")$window, main = print(paste(marker, "-", response_group)))
-    
-    # Loop through each tile to draw and color it
-    for (i in 1:length(tiles)) {
-      tile <- tiles[[i]]
-      count <- counts[i]
-      
-      # Get the color for this count
-      col_idx <- findInterval(count, sort(unique(counts)))
-      
-      # Draw the tile
-      plot(tile, add = TRUE, col = cols[col_idx], border = "black")
-    }
-    
-    plot.quadratcount(Q, add = T, entries = as.vector(round(attributes(Q)$quadratcount, 4)))
-    
-  }
-  
-}
-# The final plot (WORKING FOR NOW) ----
-# Define the order of response groups and immune markers
-response_order <- c("SD", "PD", "CR", "PR")
-marker_order <- c("LAG3", "CD3", "TIM3", "CK", "PD1","CD8")
-
-# Initialize plotting layout
-par(mfrow = c(6, 4), mar = c(0, 4, 2, 0), bty = "n", oma = c(0, 0, 4, 0)) # 6 rows for markers, 4 columns for response groups
-
-# Initialize variables to track the current row and column
-current_row <- 1
-# current_col <- 1
-
-# Loop through each immune marker in the specified order
-for (marker in marker_order) {
-  
-  # Reset the current column counter for each new row
-  current_col <- 1
-  
-  # Loop through each response group in the specified order
-  for (response_group in response_order) {
-    
-    # Retrieve the density maps for the selected response group and marker
-    Q <- grouped_by_response[[response_group]][[marker]]
-    
-    # Extract quadrat information
-    counts <- as.vector(round(attributes(Q)$quadratcount,3))
-    tiles <- attr(Q, "tess")$tiles
-    
-    # Create a color palette
-    cols <- colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2"))(length(unique(counts)))
-    
-    # Plot the window
-    plot(attr(Q, "tess")$window, main = NULL, axes = 0, box = FALSE)
-    
-    # Loop through each tile to draw and color it
-    for (i in 1:length(tiles)) {
-      tile <- tiles[[i]]
-      count <- counts[i]
-      
-      # Get the color for this count
-      col_idx <- findInterval(count, sort(unique(counts)))
-      
-      # Draw the tile
-      plot(tile, add = TRUE, col = cols[col_idx], border = "black")
-    }
-    # 
-    # # Overlay the counts
-    # plot.quadratcount(Q, add = TRUE, main = paste(marker,"-",response_group), entries = round(attributes(Q)$quadratcount,3))
-    
-    if (response_group == response_order[1]) {
-      mtext(marker, side = 2, line = 2, adj = 1, cex = 1)
-    }
-  }
-  
-  # Increment the current row
-  current_row <- current_row + 1
-}
-
-# Add the response group names above each column
-column_positions <- seq(1/8, 1, by = 1/4)
-mtext(response_order, side = 3, line = -1, outer = TRUE, at = column_positions, cex = 1)
