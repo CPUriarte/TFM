@@ -1,4 +1,4 @@
-# LIBRARIES ----
+############################################ LIBRARIES ----
 library(SPIAT)
 library(tidyverse)
 library(gridExtra)
@@ -16,7 +16,8 @@ library(FSA)
 library(ggsignif)
 library(corrplot)
 library(spatstat)
-############################################ DATA READING AND FORMATTING ---------------------------------------------
+############################################ LOADING DATA ---------------------------------------------
+# 1. DATA READING AND FORMATTING
 ## 1.1. READING IN DATA ----
 raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
 responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
@@ -72,8 +73,6 @@ rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_o
 
 SPIAT_tifs <- unique(eda_df$Image)
 
-############################################ EXPLORATORY DATA ANALYSIS (EDA) -----------------------------------------
-# TIF RETRIEVER (retrieve tifs with patient ID) ---- 
 # Number of images per patient and TIF index
 tif_index <- eda_df %>%
   group_by(ID) %>%
@@ -84,11 +83,12 @@ tif_index <- eda_df %>%
 
 tif_index$Matched_Indices <- sapply(tif_index$Images, function(images_list) which(SPIAT_tifs %in% images_list))
 
-# To retrieve indices for a specific ID:
-tif_index_retriever <- tif_index[tif_index$ID == 3501, "Matched_Indices"][[1]]
-print(tif_index_retriever)
-
-# 2. EDA ----
+############################################ EXPLORATORY DATA ANALYSIS (EDA) -----------------------------------------
+# Retrieve SPIAT image vector indexes based on ID ----
+ID <- 901 # ----
+tif_index_retriever <- tif_index[tif_index$ID == ID, "Matched_Indices"][[1]]
+print(paste("SPIAT_tifs indexes for patient", ID, "are:", tif_index_retriever))
+# 1. IMAGES PER PATIENT ----
 summary(responses)
 summary(eda_df[,c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")])
 
@@ -101,7 +101,9 @@ ggplot(tif_index, aes(x = as.factor(Count))) +
     fill = "Response to Treatment"
   )
 
-## 2.1. NUMBER OF CELLS (IMG & ID) ----
+## 1.1. NUMBER OF CELLS
+# 2. NUMBER OF CELLS
+## 1.1.1. VISUALS - QQplot of number of cells distribution(IMG & ID) ----
 # Number of cells per image (DENSITY)
 eda_df %>%
   group_by(Image) %>%
@@ -140,7 +142,7 @@ responses %>%
 # Number of cells (QQplot)
 qqPlot(responses$n_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
 
-## 2.2. AGE (ID) ----
+## 1.1.2. VISUALS - Barplot of age distribution (ID) ----
 # Overall age distribution
 responses %>%
   group_by(ID) %>%
@@ -151,7 +153,8 @@ responses %>%
        x = "Age",
        y = "Count")
 
-### 2.2.1. Age distribution statistics ----
+# 2. AGE
+## 2.1. STATISTICS - Age distribution ----
 age_stats <- list()
 age_stats$residuals <- residuals(aov(Age ~ Response, data=responses))
 shapiro.test(age_stats$residuals)
@@ -171,7 +174,9 @@ ggplot(responses, aes(x = Sex)) +
   labs(title = "Distribution of Sex", x = "Sex", y = "Count") +
   theme_minimal()
 
-### 2.3.1. Sex distribution statistics ----
+
+# 3. SEX
+## 3.1 STATISTICS - Sex distribution ----
 # LaTeX: P(X=k) = \frac{\binom{N}{n} \binom{M}{k} \binom{N-M}{n-k}}{\binom{N}{n}}
 choose(31, 10) / choose(46, 10)
 
@@ -179,7 +184,7 @@ choose(31, 10) / choose(46, 10)
 age_fishertest <- fisher.test(table(responses$Sex, responses$Response))
 age_fishertest$p.value
 
-## 2.4 MARKER INTENSITY AVERAGED BY ID ----
+# 4. MARKER INTENSITY ----
 eda_by_ID <- eda_df %>%
   group_by(ID) %>%
   summarise(
@@ -196,7 +201,7 @@ eda_by_ID <- eda_by_ID %>%
   mutate(Response = responses$Response[match(ID, responses$ID)]) %>%
   select(ID, Response, everything())
 
-### 2.4.1. Normality test ----
+## 4.1. STATISTICS - Normality test ----
 markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
 # Shapiro-Wilk test for normality
@@ -209,7 +214,7 @@ shapiro_test_by_group <- function(marker) {
 
 eda_mIntensity_shapiro_byID <- bind_rows(lapply(markers, shapiro_test_by_group))
 
-### 2.4.2. Homoscedasticity and KW test ----
+## 4.2. STATISTICS -Homoscedasticity and KW test ----
 # Levene's test for homogeneity
 test_for_marker <- function(marker) {
   
@@ -231,7 +236,7 @@ eda_mIntensity_levene_KWfdr <- bind_rows(lapply(markers, test_for_marker))
 # Applying Benjamini-Hochberg adjustment
 eda_mIntensity_levene_KWfdr$adj_kw_p_value <- p.adjust(eda_mIntensity_levene_KWfdr$kw_p_value, method = "BH")
 
-### 2.4.3. Dunn test ----
+## 4.3. STATISTICS - Dunn test ----
 dunn_results <- dunnTest(CD3 ~ Response, data = eda_by_ID, method = "bh")
 
 eda_mIntensity_dunn <- data.frame(
@@ -267,7 +272,7 @@ eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
   arrange(P.adj)
 print(eda_mIntensity_dunn)
 
-### 2.4.4. Graphics and plots ----
+## 4.4. VISUALS - Results ----
 # Correlation plot by ID
 combined_data <- merge(eda_df, responses, by = "ID")
 
@@ -308,7 +313,7 @@ ggplot(long_eda_df, aes(x = Value + shift_constant, y = Response, fill = Respons
   theme_minimal()
 
 ############################################ PHENOTYPING ATTEMPT ----
-## 3.1. DETERMINE CUTOFF ----
+# 1. Determining cutoff V1.0 (default) ----
 # Threshold dataset
 img_threshs <- eda_df %>% 
   dplyr::select(Image, ID) %>% 
@@ -379,7 +384,7 @@ merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
-## 3.1. DETERMINE CUTOFF V3 ----
+## 1.1. Determining cutoff V3.0 (not working currently) ----
 img_threshs <- eda_df %>% 
   select(Image, ID) %>% 
   distinct() %>%
@@ -437,7 +442,7 @@ merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
-## 3.2 APPLY CUTOFF ----
+# 2. PROCESSING - Applying cutoff ----
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
 for(marker in immune_markers) {
@@ -445,7 +450,7 @@ for(marker in immune_markers) {
   merged_df[, marker] <- ifelse(merged_df[, marker] >= merged_df[, cutoff_col], 1, 0)
 }
 
-### 3.2.3. Version 3.0 ---- 
+## 2.1. PROCESSING - Handling superposition ---- 
 # Add a column for duplicate identification
 # CK adjustment
 result <- pbapply(merged_df, 1, function(row) {
@@ -484,7 +489,7 @@ final_df <- rbind.data.frame(original_rows, duplicate_rows)
 final_df <- final_df[, c("Image", "X", "Y", "ID", "DAPI", immune_markers)]
 final_df[,-1] <- lapply(final_df[,-1], as.numeric)
 
-## 3.3. ASSIGN PHENOTYPES ----
+## 2.3. PROCESSING - Assigning phenotypes ----
 # Immune_markers vector
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
@@ -500,32 +505,47 @@ phenotype_strings[phenotype_strings == ""] <- "Undefined"
 # Add phenotype column to the dataframe
 final_df$Phenotype <- phenotype_strings
 
+random <- function() {
+  return(sample(1:90, 1))
+}
+
 # Remove intermediate variables to clear memory
 rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, phenotype_strings)
 
-## 3.4. SPATIAL PHENOTYPES PLOT ----
-# Phenotype distribution dotplot
-# Imagenes interesantes (CR: 53, 89 | Other: 65)
-tif <- SPIAT_tifs[53]
+# 3. VISUALS - Phenotype dotplot (IMAGES) ----
+selected_image <- SPIAT_tifs[random()] # 1 to 90 possible images (CR: 53, 89 | Other: 65) ----
 
-p <- final_df %>%
-  filter(Image == tif) %>%
-  ggplot(aes(x=X, y=Y, color=Phenotype)) + 
-  geom_point(alpha=0.7) + 
-  labs(title=paste("Dotplot for", tif), x = "X coordinate", y = "Y coordinate") + 
-  theme_minimal() + 
-  scale_color_discrete(name="Phenotypes") +
-  coord_cartesian(xlim=c(0, 1300), ylim=c(0, 1300))
+# Join final_df and responses
+final_df_joined <- final_df %>%
+  left_join(responses, by = "ID")
+
+# Plot
+p <- final_df_joined %>%
+  filter(Image == selected_image) %>%
+  ggplot(aes(x = X, y = Y, color = Phenotype)) +
+  geom_point(alpha = 0.7) +
+  labs(
+    title = paste(
+      selected_image,
+      "(", first(unique(final_df_joined$Response[final_df_joined$Image == selected_image])), ")",
+      sep = " "
+    ),
+    x = "X coordinate",
+    y = "Y coordinate"
+  ) +
+  theme_minimal() +
+  scale_color_discrete(name = "Phenotypes") +
+  coord_cartesian(xlim = c(0, 1300), ylim = c(0, 1300))
 
 ggplotly(p)
 
-## 3.5. THRESHOLDING QUALITY CONTROL ----
+## 3.1. VISUALS - Marker distribution and tresholding (IMAGES) ----
 
-long_eda_df <- eda_df[eda_df$Image == tif, ] %>%
+long_eda_df <- eda_df[eda_df$Image == selected_image, ] %>%
   pivot_longer(cols = colnames(eda_df[, 6:11]), names_to = "marker", values_to = "intensity")
 
 long_eda_df$cutoff <- sapply(1:nrow(long_eda_df), function(i) {
-  img_threshs[img_threshs$Image == tif, paste0("cutoff_", long_eda_df$marker[i])]
+  img_threshs[img_threshs$Image == selected_image, paste0("cutoff_", long_eda_df$marker[i])]
 })
 
 long_eda_df$cutoff <- as.numeric(long_eda_df$cutoff)
@@ -533,7 +553,7 @@ long_eda_df$cutoff <- as.numeric(long_eda_df$cutoff)
 ggplot(long_eda_df, aes(x = intensity)) +
   geom_density(fill = "aquamarine") +
   geom_vline(aes(xintercept = cutoff), color = "red", linetype = "dashed") +
-  labs(title = paste("Density distribution of markers for", tif),
+  labs(title = paste("Density distribution of markers for", selected_image),
        subtitle = paste("Cutoff values are displayed as red dashed lines"),
        x = "Intensity",
        y = "Density") +
@@ -542,7 +562,7 @@ ggplot(long_eda_df, aes(x = intensity)) +
 
 # Marker intensity dotplot
 eda_df %>%
-  filter(Image == tif) %>%
+  filter(Image == selected_image) %>%
   ggplot(aes(x=X, y=Y, color=CK)) +
   geom_point(alpha=0.6) +
   scale_color_gradientn(n.breaks = 3, colors = terrain.colors(93)) +
@@ -550,7 +570,7 @@ eda_df %>%
   theme_minimal()
 
 
-## 3.6. PHENOTYPE GROUP ID AVGED PROPORTIONS BARPLOT ----
+## 3.2. VISUALS - Median phenotype proportion per response group (RESPONSE) ----
 # Median Proportion of Phenotypes per Response Group (PATIENTS)
 # Step 1: Get unique phenotypes across all images
 cp_unique_phenos <- unique(final_df$Phenotype)
