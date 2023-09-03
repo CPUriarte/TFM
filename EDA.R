@@ -1,6 +1,3 @@
-# Record the start time ----
-start_time <- Sys.time()
-
 # LIBRARIES ----
 library(SPIAT)
 library(tidyverse)
@@ -1653,9 +1650,6 @@ suppressWarnings({
 })
 
 ## Statistics - Marker heatmaps
-# Record the end time ----
-end_time <- Sys.time()
-end_time - start_time
 # ----
 # Reshape the data for ggplot2
 long_df <- eda_df[eda_df$Image == SPIAT_tifs[1], ] %>% 
