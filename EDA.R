@@ -21,8 +21,8 @@ library(corrplot)
 library(spatstat)
 ############################################ DATA READING AND FORMATTING ---------------------------------------------
 ## 1.1. READING IN DATA ----
-raw_measurements <- read.table("QuPath/measurementsP2.tsv", header = TRUE, sep = "\t")
-responses <- read.csv("ResponsesTrue.csv", header = TRUE, sep = ",")
+raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
+responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
 
 ## 1.2. FORMATTING FOR EDA ----
 # Treatment response dataset
@@ -248,7 +248,7 @@ eda_mIntensity_dunn <- data.frame(
 p <- ggplot(eda_by_ID, aes(x = Response, y = CD3)) +
   geom_boxplot(outlier.shape = NA) + 
   geom_jitter(width = 0.2, size = 2, alpha = 0.6) +
-  labs(title = "CD3 Intensity by Response Group", y = "CD3 Intensity", x = "Response Group") +
+  labs(title = "CD3 Intensity by Response Group", y = NULL, x = NULL) +
   theme_minimal() +
   theme(legend.position = "none")
 
@@ -1668,4 +1668,3 @@ ggplot(long_df, aes(x = TIM3, y = Value)) +
   geom_smooth(method = "lm", se = TRUE, aes(color = "black")) +  # se=TRUE adds the confidence interval
   facet_wrap(~ Marker) +
   theme_minimal()
-# ESPERAREMOS LOS VIENTOS INVERNALES

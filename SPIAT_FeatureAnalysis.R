@@ -23,8 +23,8 @@ library(SPIAT)
 
 ############################################ DATA READING AND FORMATTING ---------------------------------------------
 ## 1.1. READING IN DATA ----
-raw_measurements <- read.table("measurements.tsv", header = TRUE, sep = "\t")
-responses <- read.csv("Responses.csv", header = TRUE, sep = ",")
+raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
+responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
 
 ## 1.2. FORMATTING FOR EDA ----
 # Treatment response dataset
@@ -1303,7 +1303,7 @@ for (marker in marker_order) {
 # Add the response group names above each column
 column_positions <- seq(1/8, 1, by = 1/4)
 mtext(response_order, side = 3, line = -1, outer = TRUE, at = column_positions, cex = 1)
-# STATS - Kruskall wallis with bonferroni correction ----
+# STATS - Kruskall Wallis ----
 # Initialize an empty data frame to store the summary statistics
 summary_table <- data.frame()
 
@@ -1414,6 +1414,112 @@ dunn_results <- dunn_results %>%
 
 # Print the Dunn's test results
 print(dunn_results)
+# STATS - Optimal number of bins ----
+# Function to calculate RSS for a given number of bins
+calculate_RSS <- function(df, n_bins) {
+  # Initialize counts for each bin
+  bin_counts <- table(df$bin_x, df$bin_y)
+  
+  # Convert table to data frame
+  bin_counts_df <- as.data.frame(as.table(bin_counts))
+  names(bin_counts_df) <- c("bin_x", "bin_y", "Freq")
+  
+  # Make sure bin_counts includes zeros for empty bins
+  all_possible_bins <- expand.grid(bin_x = unique(df$bin_x), bin_y = unique(df$bin_y))
+  bin_counts_df <- merge(all_possible_bins, bin_counts_df, all.x = TRUE, by = c("bin_x", "bin_y"))
+  bin_counts_df[is.na(bin_counts_df)] <- 0
+  
+  # Calculate the observed proportions
+  total_points <- sum(bin_counts_df$Freq)
+  observed_proportions <- bin_counts_df$Freq / total_points
+  
+  # Calculate the expected counts and proportions
+  base_count <- floor(total_points / n_bins)
+  extra_counts = total_points %% n_bins
+  
+  # Distribute the "extra counts" randomly
+  set.seed(123) # for reproducibility
+  extra_indices <- sample(1:n_bins, extra_counts)
+  
+  expected_counts = rep(base_count, n_bins)
+  expected_counts[extra_indices] = expected_counts[extra_indices] + 1
+  
+  expected_proportions = expected_counts / total_points
+  
+  # Calculate residuals for each bin
+  residuals <- observed_proportions - expected_proportions
+  
+  # Calculate RSS
+  RSS <- sum(residuals^2)
+  
+  return(RSS)
+}
+
+# Calculate the center and largest radius of all data
+all_data_center_x <- mean(eda_df$X)
+all_data_center_y <- mean(eda_df$Y)
+largest_radius <- max(sqrt((eda_df$X - all_data_center_x)^2 + (eda_df$Y - all_data_center_y)^2))
+
+# Make the observation window 5% larger
+window_radius <- largest_radius * 1.05
+
+# Define the radius of the influence region (this should be the same as your optimal bandwidth)
+radius <- 40  # Replace with your optimal bandwidth if different
+
+markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
+
+# Initialize the bin_metrics dataframe
+bin_metrics <- data.frame(I = character(), M = character(), stringsAsFactors = FALSE)
+
+# Loop through each number of bins from 15 to 100
+for (n_bins in 15:100) {
+  
+  # Temporary dataframe to store the current bin_metrics
+  temp_bin_metrics <- data.frame(I = character(), M = character(), RSS = numeric(), stringsAsFactors = FALSE)
+  
+  # Loop through each image and marker
+  for (image in names(spiat_scattercount)) {
+    for (marker in markers) {
+      
+      # Subset data for current image and marker
+      image_data <- spiat_scattercount[[image]]
+      image_data_df <- as.data.frame(image_data)
+      sub_df <- image_data_df[grepl(marker, image_data_df$P, fixed = TRUE), ]
+      
+      # # Filter data points that fall within the circular window
+      # sub_df <- sub_df %>%
+      #   filter(sqrt((X - all_data_center_x)^2 + (Y - all_data_center_y)^2) <= window_radius)
+      
+      # Bin the data within the circular window
+      sub_df <- sub_df %>%
+        mutate(
+          bin_x = floor((X - all_data_center_x) / radius),
+          bin_y = floor((Y - all_data_center_y) / radius)
+        )
+      
+      # Calculate RSS
+      RSS <- calculate_RSS(sub_df, n_bins)
+      
+      # Append to the temporary dataframe
+      temp_bin_metrics <- rbind(temp_bin_metrics, data.frame(I = image, M = marker, RSS = RSS))
+      print(marker)
+    }
+    print(image)
+  }
+  
+  # Rename the RSS column to the current n_bins
+  names(temp_bin_metrics)[names(temp_bin_metrics) == "RSS"] <- as.character(n_bins)
+  
+  # Merge with the existing bin_metrics dataframe
+  if (nrow(bin_metrics) == 0) {
+    bin_metrics <- temp_bin_metrics
+  } else {
+    bin_metrics <- merge(bin_metrics, temp_bin_metrics, by = c("I", "M"), all = TRUE)
+  }
+  
+  print(paste(n_bins, "bins test completed."))
+}
+
 # STATS - Bandwidth testing ----
 # Function to calculate optimal bandwidths for each image
 calculate_bandwidths <- function(df) {
@@ -1730,244 +1836,3 @@ V <- tess(image = Zcut, window = w)
 
 # Plot tessellation
 plot(V)
-optimal_bandwidth <- 40 # Select optimal bandwidth ----
-marker_of_interest <- "PD1" # Select marker ----
-# VISUALS - Has round window  ----
-# Calculate the center and largest radius of all data
-all_data_center_x <- mean(eda_df$X)
-all_data_center_y <- mean(eda_df$Y)
-largest_radius <- max(sqrt((eda_df$X - all_data_center_x)^2 + (eda_df$Y - all_data_center_y)^2))
-
-# Make the observation window 5% larger
-window_radius <- largest_radius * 1.05
-
-# Define the radius of the influence region (this should be the same as your optimal bandwidth)
-radius <- 20  # Replace with your optimal bandwidth if different
-
-# Named nested list (ID > Aggregated values per bin and patient)
-tiled_markerheatmap_xID <- list()
-
-# Iterate over each unique patient ID
-for(id in unique_ids) {
-  
-  # Subset current ID / Create optimal window for ID
-  bin_data <- eda_df_long[eda_df_long$ID == id,] %>%
-    mutate(
-      bin_x = floor((X - all_data_center_x) / radius),
-      bin_y = floor((Y - all_data_center_y) / radius)
-    )
-  
-  # Group by bin, Image, and marker, sums the mean intensity of the cells presents in each bin and computes their median value
-  resultado <- suppressMessages({
-    bin_data %>%
-      group_by(Image, marker, bin_x, bin_y) %>%
-      summarise(med_value = median(value, na.rm = TRUE))
-  })
-  
-  # Aggregate across images by bin index and marker for each patient to account for multiple measures
-  resultado <- suppressMessages({
-    resultado %>%
-      group_by(marker, bin_x, bin_y) %>%
-      summarise(median_value_across_images = median(med_value, na.rm = TRUE))
-  })
-  
-  resultado <- resultado %>%
-    mutate(
-      X = min(eda_df$X) + (bin_x + 0.5),
-      Y = min(eda_df$Y) + (bin_y + 0.5),
-    )
-  
-  # Apply Diggle's border correction for a circular window
-  resultado <- resultado %>%
-    rowwise() %>%
-    mutate(
-      weight = (asin(min(radius, window_radius - sqrt((X - all_data_center_x)^2 + (Y - all_data_center_y)^2)) / radius) * 2) / pi
-    ) %>%
-    ungroup()
-  
-  # Use the weight to adjust the median_value_across_images
-  resultado <- resultado %>%
-    mutate(
-      corrected_median_value = median_value_across_images * weight
-    )
-
-# Store the result in the list
-tiled_markerheatmap_xID[[as.character(id)]] <- resultado
-print(paste("Binning patient", id, "and measuring median", marker_of_interest, "intensity per bin "))
-
-}
-
-# Create named nested list of lists (Response group > ID > Median intensity per ID, marker, and bin)
-tiled_markerheatmap_xResponse <- list()
-
-# Groups aggregated ID values by response group
-for (response in unique(responses$Response)) {
-  
-  print(paste("Retrieving", response, "IDs."))
-  
-  # Get the IDs associated with the current response group
-  matching_ids <- as.character(responses$ID[responses$Response == response])
-  
-  print(paste("Matching IDs:", cat(matching_ids)))
-  
-  # Filter tiled_markerheatmap_xResponse by the matching IDs but maintain the individual structure
-  tiled_markerheatmap_xResponse[[response]] <- tiled_markerheatmap_xID[matching_ids]
-}
-
-# Create named nested list (Response group > Median intensity per response, marker and bin)
-tiled_medmarkerint_xResponse <- list()
-
-# Groups bins by 
-for (response in names(tiled_markerheatmap_xResponse)) {
-  
-  # Retrieve all patients data by current response
-  patient_list <- tiled_markerheatmap_xResponse[[response]]
-  
-  # Binds ID data and filter by selected marker
-  combined_data <- bind_rows(patient_list) %>% 
-    filter(marker == marker_of_interest)
-  
-  # Compute median for each bin location across all patients of current response
-  response_data <- combined_data %>%
-    group_by(bin_x, bin_y, X, Y) %>%
-    summarise(median_value = median(median_value_across_images, na.rm = TRUE)) %>%
-    mutate(marker = marker_of_interest) %>%
-    ungroup()
-  
-  # Store in the results list
-  tiled_medmarkerint_xResponse[[response]] <- response_data
-  
-  # Confirmation debug
-  print(paste("Computing", marker_of_interest, "median intensities for", response, ": Completed."))
-}
-
-# Transform for easier manipulation and visualization of results
-all_data <- bind_rows(lapply(names(tiled_medmarkerint_xResponse), function(response) {
-  
-  # Creates a dataframe by binding each response group aggregated value as column
-  df <- tiled_medmarkerint_xResponse[[response]]
-  df$Response <- response
-  
-  # Confirmation debug
-  print(paste(marker_of_interest, "processing for the", response, "group: Completed."))
-  
-  return(df)
-  
-}))
-
-# Plot
-p_resultado <- ggplot(all_data, aes(x = X, y = Y, fill = log1p(median_value))) +
-  geom_tile() +
-  scale_fill_gradient(low = "aliceblue", high = "firebrick3", name = NULL) +
-  theme_minimal() +
-  labs(title = paste("Median Intensity Of", marker_of_interest, "Across Response", "(",radius,")")) +
-  facet_wrap(~ Response, ncol = 4)
-
-ggplotly(p_resultado)
-# VISUALS - The optimal number of bins ----
-# Function to calculate RSS for a given number of bins
-calculate_RSS <- function(df, n_bins) {
-  # Initialize counts for each bin
-  bin_counts <- table(df$bin_x, df$bin_y)
-  
-  # Convert table to data frame
-  bin_counts_df <- as.data.frame(as.table(bin_counts))
-  names(bin_counts_df) <- c("bin_x", "bin_y", "Freq")
-  
-  # Make sure bin_counts includes zeros for empty bins
-  all_possible_bins <- expand.grid(bin_x = unique(df$bin_x), bin_y = unique(df$bin_y))
-  bin_counts_df <- merge(all_possible_bins, bin_counts_df, all.x = TRUE, by = c("bin_x", "bin_y"))
-  bin_counts_df[is.na(bin_counts_df)] <- 0
-  
-  # Calculate the observed proportions
-  total_points <- sum(bin_counts_df$Freq)
-  observed_proportions <- bin_counts_df$Freq / total_points
-  
-  # Calculate the expected counts and proportions
-  base_count <- floor(total_points / n_bins)
-  extra_counts = total_points %% n_bins
-  
-  # Distribute the "extra counts" randomly
-  set.seed(123) # for reproducibility
-  extra_indices <- sample(1:n_bins, extra_counts)
-  
-  expected_counts = rep(base_count, n_bins)
-  expected_counts[extra_indices] = expected_counts[extra_indices] + 1
-  
-  expected_proportions = expected_counts / total_points
-  
-  # Calculate residuals for each bin
-  residuals <- observed_proportions - expected_proportions
-  
-  # Calculate RSS
-  RSS <- sum(residuals^2)
-  
-  return(RSS)
-}
-
-# Calculate the center and largest radius of all data
-all_data_center_x <- mean(eda_df$X)
-all_data_center_y <- mean(eda_df$Y)
-largest_radius <- max(sqrt((eda_df$X - all_data_center_x)^2 + (eda_df$Y - all_data_center_y)^2))
-
-# Make the observation window 5% larger
-window_radius <- largest_radius * 1.05
-
-# Define the radius of the influence region (this should be the same as your optimal bandwidth)
-radius <- 40  # Replace with your optimal bandwidth if different
-
-markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
-
-# Initialize the bin_metrics dataframe
-bin_metrics <- data.frame(I = character(), M = character(), stringsAsFactors = FALSE)
-
-# Loop through each number of bins from 15 to 100
-for (n_bins in 15:100) {
-  
-  # Temporary dataframe to store the current bin_metrics
-  temp_bin_metrics <- data.frame(I = character(), M = character(), RSS = numeric(), stringsAsFactors = FALSE)
-  
-  # Loop through each image and marker
-  for (image in names(spiat_scattercount)) {
-    for (marker in markers) {
-      
-      # Subset data for current image and marker
-      image_data <- spiat_scattercount[[image]]
-      image_data_df <- as.data.frame(image_data)
-      sub_df <- image_data_df[grepl(marker, image_data_df$P, fixed = TRUE), ]
-      
-      # # Filter data points that fall within the circular window
-      # sub_df <- sub_df %>%
-      #   filter(sqrt((X - all_data_center_x)^2 + (Y - all_data_center_y)^2) <= window_radius)
-      
-      # Bin the data within the circular window
-      sub_df <- sub_df %>%
-        mutate(
-          bin_x = floor((X - all_data_center_x) / radius),
-          bin_y = floor((Y - all_data_center_y) / radius)
-        )
-      
-      # Calculate RSS
-      RSS <- calculate_RSS(sub_df, n_bins)
-      
-      # Append to the temporary dataframe
-      temp_bin_metrics <- rbind(temp_bin_metrics, data.frame(I = image, M = marker, RSS = RSS))
-      print(marker)
-    }
-    print(image)
-  }
-  
-  # Rename the RSS column to the current n_bins
-  names(temp_bin_metrics)[names(temp_bin_metrics) == "RSS"] <- as.character(n_bins)
-  
-  # Merge with the existing bin_metrics dataframe
-  if (nrow(bin_metrics) == 0) {
-    bin_metrics <- temp_bin_metrics
-  } else {
-    bin_metrics <- merge(bin_metrics, temp_bin_metrics, by = c("I", "M"), all = TRUE)
-  }
-  
-  print(paste(n_bins, "bins test completed."))
-}
-
-
