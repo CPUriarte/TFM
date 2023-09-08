@@ -9,7 +9,7 @@
 ## **Contributors**
 
 ### **Directors**
-Carlos Eduardo De Andrea, M.D., M.Sc.  
+Carlos E. De Andrea, M.D., M.Sc.  
 Full Professor in Pathology, Anatomy, and Physiology   
 Clinica Universidad de Navarra  
 Pamplona, Spain  
@@ -21,12 +21,5 @@ Pamplona, Spain
 
 ### **Author**
 Cyril Puyo, M.D., M.Sc.  
-Expected MCA  
 University of Navarra  
-Pamplona, Spain  
-
-### **Other contributors**
-Raluca Alexandru  
-Research Associate  
-Clinica Universidad de Navarra  
 Pamplona, Spain  
