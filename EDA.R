@@ -16,7 +16,7 @@ library(FSA)
 library(ggsignif)
 library(corrplot)
 library(spatstat)
-############################################ LOADING DATA ---------------------------------------------
+############################################ LOADING DATA ----
 # 1. DATA READING AND FORMATTING
 ## 1.1. READING IN DATA ----
 raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
@@ -57,7 +57,6 @@ eda_df <- eda_df[, -ncol(eda_df)]
 new_order <- c("Image", "X", "Y", "ID", "DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 eda_df <- eda_df[, new_order]
 
-
 # Counting the number of cells per TIFF and binding it to the response dataset
 cell_counts <- table(eda_df$ID)
 cell_counts<- as.data.frame(cell_counts)
@@ -65,10 +64,11 @@ colnames(cell_counts) <- c("ID", "Cell_Count")
 cell_count_vector <- cell_counts$Cell_Count[match(responses$ID, cell_counts$ID)]
 responses$n_cells <- cell_count_vector
 
-# Limpieza de la memoria
+# Dropping non-evaluable patients
 responses$Response <- droplevels(responses$Response, "Not evaluable/NE")
 levels(responses$Response) <- c("CR", "PR", "PD", "SD")
 
+# Clear interdiary variables
 rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector"))
 
 SPIAT_tifs <- unique(eda_df$Image)
@@ -83,7 +83,7 @@ tif_index <- eda_df %>%
 
 tif_index$Matched_Indices <- sapply(tif_index$Images, function(images_list) which(SPIAT_tifs %in% images_list))
 
-############################################ EXPLORATORY DATA ANALYSIS (EDA) -----------------------------------------
+############################################ EXPLORATORY DATA ANALYSIS (EDA) ----
 # Retrieve SPIAT image vector indexes based on ID ----
 ID <- 901 # ----
 tif_index_retriever <- tif_index[tif_index$ID == ID, "Matched_Indices"][[1]]
@@ -154,7 +154,7 @@ responses %>%
        y = "Count")
 
 # 2. AGE
-## 2.1. STATISTICS - Age distribution ----
+# 2. Age distribution ----
 age_stats <- list()
 age_stats$residuals <- residuals(aov(Age ~ Response, data=responses))
 shapiro.test(age_stats$residuals)
@@ -176,7 +176,7 @@ ggplot(responses, aes(x = Sex)) +
 
 
 # 3. SEX
-## 3.1 STATISTICS - Sex distribution ----
+# 3. Sex distribution ----
 # LaTeX: P(X=k) = \frac{\binom{N}{n} \binom{M}{k} \binom{N-M}{n-k}}{\binom{N}{n}}
 choose(31, 10) / choose(46, 10)
 
@@ -184,7 +184,7 @@ choose(31, 10) / choose(46, 10)
 age_fishertest <- fisher.test(table(responses$Sex, responses$Response))
 age_fishertest$p.value
 
-# 4. MARKER INTENSITY ----
+# 4. Marker intensity ----
 eda_by_ID <- eda_df %>%
   group_by(ID) %>%
   summarise(
@@ -214,7 +214,7 @@ shapiro_test_by_group <- function(marker) {
 
 eda_mIntensity_shapiro_byID <- bind_rows(lapply(markers, shapiro_test_by_group))
 
-## 4.2. STATISTICS -Homoscedasticity and KW test ----
+## 4.2. STATISTICS - Homoscedasticity and KW test ----
 # Levene's test for homogeneity
 test_for_marker <- function(marker) {
   
@@ -489,7 +489,7 @@ final_df <- rbind.data.frame(original_rows, duplicate_rows)
 final_df <- final_df[, c("Image", "X", "Y", "ID", "DAPI", immune_markers)]
 final_df[,-1] <- lapply(final_df[,-1], as.numeric)
 
-## 2.3. PROCESSING - Assigning phenotypes ----
+## 2.2. PROCESSING - Assigning phenotypes ----
 # Immune_markers vector
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
@@ -513,7 +513,7 @@ random <- function() {
 rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, phenotype_strings)
 
 # 3. VISUALS - Phenotype dotplot (IMAGES) ----
-selected_image <- SPIAT_tifs[random()] # 1 to 90 possible images (CR: 53, 89 | Other: 65) ----
+selected_image <- SPIAT_tifs[random()] # 1 to 90 possible images ----
 
 # Join final_df and responses
 final_df_joined <- final_df %>%
