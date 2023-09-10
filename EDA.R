@@ -68,7 +68,7 @@ responses$n_cells <- cell_count_vector
 responses$Response <- droplevels(responses$Response, "Not evaluable/NE")
 levels(responses$Response) <- c("CR", "PR", "PD", "SD")
 
-# Clear interdiary variables
+# Clear intermediary variables
 rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector"))
 
 SPIAT_tifs <- unique(eda_df$Image)
@@ -248,9 +248,9 @@ eda_mIntensity_dunn <- data.frame(
 
 # Visualize
 p <- ggplot(eda_by_ID, aes(x = Response, y = CD3)) +
-  geom_boxplot(outlier.shape = NA) + 
+  geom_violin() + 
   geom_jitter(width = 0.2, size = 2, alpha = 0.6) +
-  labs(title = "CD3 Intensity by Response Group", y = NULL, x = NULL) +
+  labs(title = "Mean CD3 Intensity by Response Group", y = NULL, x = NULL) +
   theme_minimal() +
   theme(legend.position = "none")
 
@@ -277,13 +277,13 @@ print(eda_mIntensity_dunn)
 combined_data <- merge(eda_df, responses, by = "ID")
 
 # Subset
-subset_data <- combined_data[, c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK", "X", "Y", "Age")]
+subset_data <- combined_data[, c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")]
 
 # Calculate
-correlation_matrix <- cor(subset_data, method = "spearman", use = "pairwise.complete.obs")
+correlation_matrix <- cor(subset_data, method = "spearman", use = "complete.obs")
 
 # Correlation matrix
-corrplot(correlation_matrix, method = "number", type = "lower", order = "FPC")
+corrplot(correlation_matrix, method = "color", addrect = NULL)
 
 # Marker intensities distribution accross images (BOXPLOT)
 ggplot(eda_df %>% pivot_longer(cols = PD1:CK, names_to = "Marker", values_to = "Intensity"), 
