@@ -323,7 +323,7 @@ ggplot(long_eda_df, aes(x = Value + shift_constant, y = Response, fill = Respons
   theme_minimal()
 
 ############################################ PHENOTYPING ATTEMPT ----
-# 1. Determining cutoff (Version 1) ----
+# (Version 1) - Determining cutoff ----
 # Threshold dataset
 img_threshs <- eda_df %>% 
   dplyr::select(Image, ID) %>% 
@@ -394,7 +394,7 @@ merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
-## 1.1. Determining cutoff (Version 2) ----
+# (Version 2) - Determining cutoff ----
 img_threshs <- eda_df %>% 
   select(Image, ID) %>% 
   distinct() %>%
