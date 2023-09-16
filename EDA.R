@@ -85,7 +85,7 @@ tif_index$Matched_Indices <- sapply(tif_index$Images, function(images_list) whic
 
 ############################################ EXPLORATORY DATA ANALYSIS (EDA) ----
 # Retrieve SPIAT image vector indexes based on ID ----
-ID <- 901 # ----
+ID <- 303 # 1101, 502, 303 ----
 tif_index_retriever <- tif_index[tif_index$ID == ID, "Matched_Indices"][[1]]
 print(paste("SPIAT_tifs indexes for patient", ID, "are:", tif_index_retriever))
 # 1. IMAGES PER PATIENT ----
@@ -103,7 +103,7 @@ ggplot(tif_index, aes(x = as.factor(Count))) +
 
 ## 1.1. NUMBER OF CELLS
 # 2. NUMBER OF CELLS
-## 1.1.1. VISUALS - QQplot of number of cells distribution(IMG & ID) ----
+## 1.1. VISUALS - QQplot of number of cells distribution(IMG & ID) ----
 # Number of cells per image (DENSITY)
 eda_df %>%
   group_by(Image) %>%
@@ -142,7 +142,7 @@ responses %>%
 # Number of cells (QQplot)
 qqPlot(responses$n_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
 
-## 1.1.2. VISUALS - Barplot of age distribution (ID) ----
+## 1.1. VISUALS - Barplot of age distribution (ID) ----
 # Overall age distribution
 responses %>%
   group_by(ID) %>%
@@ -276,24 +276,34 @@ print(eda_mIntensity_dunn)
 # Correlation plot by ID
 combined_data <- merge(eda_df, responses, by = "ID")
 
-# Subset
+# Subset markers
 subset_data <- combined_data[, c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")]
 
-# Calculate
+# Compute with spearman's
 correlation_matrix <- cor(subset_data, method = "spearman", use = "complete.obs")
 
 # Correlation matrix
-corrplot(correlation_matrix, method = "color", addrect = NULL)
+corrplot(correlation_matrix, type = "lower", method = "color", addCoef.col = 'black', tl.pos = 'd')
+corrplot(correlation_matrix, type = "upper", method = "ellipse", diag = F, tl.pos = 'n', cl.pos = 'n', add=T)
 
-# Marker intensities distribution accross images (BOXPLOT)
-ggplot(eda_df %>% pivot_longer(cols = PD1:CK, names_to = "Marker", values_to = "Intensity"), 
-       aes(x = log1p(Intensity), fill = Marker)) +
-  geom_density(alpha = 0.7) +
-  facet_wrap(~ Marker, scales = "free_x") +
-  labs(title = "Density Plot of Log-transformed Marker Intensities", 
-       y = "Density", 
-       x = "Log-transformed Intensity (log(1+Intensity))") +
-  theme_minimal()
+# Network analysis
+cor_matrix <- matrix(correlation_matrix, nrow=6, byrow=TRUE)
+
+rownames(cor_matrix) <- colnames(cor_matrix) <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
+
+# Create list on arbitrary treshold
+edges <- which(abs(cor_matrix) > 0.5 & upper.tri(cor_matrix), arr.ind = TRUE)
+edge_list <- data.frame(from = rownames(cor_matrix)[edges[, 1]], 
+                        to = rownames(cor_matrix)[edges[, 2]], 
+                        weight = abs(cor_matrix[edges]))
+
+g <- graph_from_data_frame(edge_list, directed = FALSE)
+
+# Plot graph with scaled edge width
+plot(g, vertex.label=V(g)$name,
+     vertex.size=30,
+     edge.width=(E(g)$weight - min(E(g)$weight)) * 50,
+     vertex.color="firebrick3", edge.color='orange', vertex.label.color = "ivory")
 
 # Distribution of marker intensity accross patients per response groups
 # Pivoting eda_by_ID (consists of aggregated patients by median)
