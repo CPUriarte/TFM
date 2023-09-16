@@ -459,7 +459,7 @@ average_nearest_neighbor_index(
 
 ########################################### FEATURE 1 - PHENOTYPES -----
 # EXTRACT - Predicted phenotypes ----
-# Initialize a list to store processed data for each image
+## PROCESS - Extraction and re-ordering ----
 spiat_predicted_phenotypes <- list()
 
 # Create a custom function for extracting the necessary details from the SpatialExperiment object
@@ -470,7 +470,7 @@ extract_data_from_spatial_experiment <- function(spe_object) {
   return(list(spatial_coords = spatial_coords, phenotype = phenotype))
 }
 
-# Use pblapply (from pbapply package) to loop through each image in SPIAT_tifs with a progress bar
+# Use pblapply (from pbapply package) to loop through each image in SPIAT_tifs
 spiat_predicted_phenotypes <- pblapply(SPIAT_tifs, function(selected_image) {
   
   # Filter data based on the current image
@@ -518,7 +518,7 @@ spiat_predicted_phenotypes <- pblapply(SPIAT_tifs, function(selected_image) {
   return(list(image_name = selected_image, spatial_coords = extracted_data$spatial_coords, phenotype = extracted_data$phenotype))
 })
 
-# If you want to name each list entry with its corresponding image name (optional)
+# Name each list entry with its corresponding image name
 names(spiat_predicted_phenotypes) <- sapply(spiat_predicted_phenotypes, function(x) x$image_name)
 
 ## OBTAIN PREDICTED PHENOTYPE COUNTS
@@ -595,7 +595,7 @@ final_order <- c("Image","ID", "Response", "None", "CK", ordered_cols)
 # Re-arrange columns of the dataframe based on final_order
 spiat_pheno_counts <- spiat_pheno_counts[, final_order]
 
-## MEDIAN PREDICTED PHENOTYPE PROPORTIONS (VISUALIZATION)
+## PROCESS - Convert to proportions ----
 # Step 1: Reshape the data
 spiat_long_format <- spiat_pheno_counts %>%
   select(-Image) %>%
@@ -637,7 +637,7 @@ spiat_aggregated_pheno <- spiat_long_with_props %>%
 spiat_aggregated_pheno <- spiat_aggregated_pheno %>%
   mutate(spiat_GroupProp = spiat_PhenotypeSum / spiat_TotalSum)
 
-
+# So that abscent markers are not ignored but counted as 0
 spiat_pheno_counts[,4:67] <- apply(spiat_pheno_counts[,4:67], 2, function(x) ifelse(is.na(x), 0, x))
 
 # Aggregation by summation (since phenotypes are count, we test proportions instead of counts to lessen the effects of repeated paired measures)
@@ -708,7 +708,7 @@ for (pheno in spiat_phenoKWfdr$Phenotype[spiat_phenoKWfdr$p.value < 0.05]) {
 # Cleaning up
 rm(col_index, current_cols, i, image, image_name, image_phenotype_counts, ordered_cols, phenotype, phenotype_vector, phenotypes_in_image, row_index, 
    unique_phenotypes, primary_weights, secondary_weights, combined_weights, get_primary_weight, get_secondary_weight, final_order, spiat_pheno_temp, 
-   marker, markers, p_val, dunn_df, dunn_results, lev_test, spiat_long_format, spiat_long_with_props, spiat_phenoKW, spiat_total_cells_per_ID)
+   marker, markers, p_val, dunn_df, dunn_results, lev_test, spiat_long_format, spiat_phenoKW, spiat_total_cells_per_ID)
 
 ## RESULTS - Statistics (Aqui falta point plot con p valores) ----
 print(
@@ -717,7 +717,36 @@ print(
     arrange(p.value)
 )
 
-## VISUALS - Horizontal Stacked Barplots ----
+print(
+  spiat_pheno_dunn %>% 
+    filter(P.adj < 0.05) %>% 
+    arrange(P.adj)
+)
+
+## VISUALS - Horizontal stacked barplots (PATIENTS) ----
+# Generate the base plot
+# Merge the datasets
+merged_data <- merge(spiat_long_with_props, responses[, c("ID", "Response")], by = "ID")
+
+# Order IDs based on Response categories
+ordered_ids <- merged_data %>% 
+  arrange(factor(Response, levels = c("CR", "PR", "SD", "PD"))) %>%
+  pull(ID) %>%
+  unique()
+
+# Relevel factor levels of ID
+merged_data$ID <- factor(merged_data$ID, levels = ordered_ids)
+
+# Plot
+gg <- ggplot(merged_data, aes(x=factor(ID), y=spiat_Prop, fill=spiat_Phenotype)) +
+  geom_bar(stat="identity", position="fill") + 
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5, margin = margin(t = 0, r = 0, b = 0, l = 0)))
+
+gg
+
+## VISUALS - Horizontal stacked barplots (RESPONSES) ----
 spiat_plot <- ggplot(spiat_aggregated_pheno, aes(x = spiat_Response, y = spiat_GroupProp, fill = spiat_Phenotype)) +
   geom_bar(stat = "identity") +
   coord_flip() +
@@ -728,7 +757,7 @@ spiat_plot <- ggplot(spiat_aggregated_pheno, aes(x = spiat_Response, y = spiat_G
     fill = "Phenotype"
   )
 
-ggplotly(spiat_plot)
+plot(spiat_plot)
 
 ########################################### FEATURE 2 - SCATTERPLOT (S/T) -----
 # EXTRACT - Scatterplot data ----
@@ -846,13 +875,10 @@ spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
 
 nq <- 7 # Select n of quadrats (<90) ----
 # PROCESSING - Creates PPP, density maps and quadrats (ALL IMAGES) ---- 
-# Note to self: Next time create a hyperframe instead of so many list
 allY_list <- lapply(spiat_scattercount, function(x) x$Y)
-maxY <- max(unlist(allY_list))
 center_y <- median(unlist(allY_list))
 
 allX_list <- lapply(spiat_scattercount, function(x) x$X)
-maxX <- max(unlist(allX_list))
 center_x <- median(unlist(allX_list))
 
 # Calculate distances from center to each point
@@ -905,8 +931,7 @@ for (image_name in names(spiat_scattercount)) {
     # Create a point pattern object
     P <- ppp(subset_data$X, subset_data$Y, 
                          checkdup = FALSE, 
-                         window = w,
-                         marks = subset_data[[marker]])
+                         window = w)
     
     Q <- quadratcount(P, 
                       nx = nq, 
@@ -914,10 +939,9 @@ for (image_name in names(spiat_scattercount)) {
     
     # Estimate the density
     D <- density.ppp(P,
-                     sigma = 90,
+                     sigma = 85,
                      edge = TRUE,
-                     diggle = TRUE,
-                     weights = P$marks)
+                     diggle = TRUE)
     
     # Check if marker is present and if the number of counts is above the threshold
     if (nrow(subset_data) >= nq) {
@@ -1099,46 +1123,7 @@ for (response_group in unique(responses$Response)) {
   grouped_by_response[[response_group]] <- grouped_response_data
 }
 
-par(mfrow = c(2, 3), mar = c(1,1,1,1))
-for (response_group in names(grouped_by_response)) {
-  
-  for (marker in immune_markers) {
-    
-    # Retrieve the density maps for the selected response group
-    Q <- grouped_by_response[[response_group]][[marker]]
-    
-    # Extract quadrat information
-    counts <- as.vector(attributes(Q)$quadratcount)
-    tiles <- attr(Q, "tess")$tiles
-    
-    # Create a color palette
-    cols <- colorRampPalette(c("white", 
-                               "cyan", 
-                               "limegreen", 
-                               "yellow", 
-                               "firebrick2"))(length(unique(counts)))
-    
-    # Plot the window
-    plot(attr(Q, "tess")$window, main = print(paste(marker, "-", response_group)))
-    
-    # Loop through each tile to draw and color it
-    for (i in 1:length(tiles)) {
-      tile <- tiles[[i]]
-      count <- counts[i]
-      
-      # Get the color for this count
-      col_idx <- findInterval(count, sort(unique(counts)))
-      
-      # Draw the tile
-      plot(tile, add = TRUE, col = cols[col_idx], border = "black")
-    }
-    
-    plot.quadratcount(Q, add = T, entries = as.vector(round(attributes(Q)$quadratcount, 4)))
-    
-  }
-  
-}
-selected_image <- SPIAT_tifs[1] # Select image for visuals (1-90) ----
+selected_image <- SPIAT_tifs[1] #----
 # VISUALS - Sampler density maps ----
 # Define the order of response groups and immune markers
 response_order <- c("SD", "PD", "CR", "PR")
@@ -1147,7 +1132,6 @@ marker_order <- c("CD8", "PD1", "CK", "TIM3", "CD3", "LAG3")
 # Initialize an empty list to store the point patterns, densities, and contours
 group_ppp <- list()
 group_densities <- list()
-group_contour <- list()
 
 # Loop through each unique response group
 for (response_group in response_order) {
@@ -1155,8 +1139,8 @@ for (response_group in response_order) {
   # Filter the responses data frame to only include patients in the current response group
   group_images <- unlist(responses$image_names[responses$Response == response_group])
   
-  # Sample 2 image names from the current response group (if available)
-  sampled_images <- sample(group_images, size = min(2, length(group_images)), replace = FALSE)
+  # Sample an image from the current response group (if available)
+  sampled_images <- sample(group_images, size = min(1, length(group_images)), replace = FALSE)
   
   # Loop through each sampled image name
   for (image_name in sampled_images) {
@@ -1164,46 +1148,54 @@ for (response_group in response_order) {
     # Extract the data for the current image
     gppp <- pointpatterns[[image_name]]
     dmap <- density_maps[[image_name]]
-    gcont <- density_maps[[image_name]]
     
     # Store the point patterns, densities, and contours in the list, indexed by response group and image name
     index_name <- paste(response_group, image_name, sep = "_")
     group_ppp[[index_name]] <- gppp
     group_densities[[index_name]] <- dmap
-    group_contour[[index_name]] <- gcont
   }
 }
 
-# Plotting
-par(mfrow = c(6, length(group_ppp)), mar = c(1,1,1,1), bty = "n") # 6 rows for markers, columns for images
+# Initialize a list to store min and max density for each marker
+marker_min_max = list()
 
-# Loop through each immune marker in the specified order
-for (marker in marker_order) {
+# Loop through each image to get the min and max density for each marker
+for (image_name in names(group_densities)) {
   
-  # Loop through each image name in the specified order of response groups
+  for (marker in names(group_densities[[image_name]])) {
+    
+    current_density_values = group_densities[[image_name]][[marker]]$v
+    
+    # Update the min and max if the current density values are more extreme
+    marker_min_max[[marker]]$min = min(marker_min_max[[marker]]$min, min(current_density_values, na.rm = TRUE))
+    marker_min_max[[marker]]$max = max(marker_min_max[[marker]]$max, max(current_density_values, na.rm = TRUE))
+  }
+}
+
+# Your plotting code remains largely the same
+par(mfrow = c(6, length(group_ppp)), mar = c(1,1,1,1), bty = "n")
+
+for (marker in marker_order) {
   for (response_group in response_order) {
     for (image_name in names(group_ppp)) {
       
-      # Check if the image_name starts with the current response_group
       if (startsWith(image_name, response_group)) {
         
-        # Extract the point pattern for the current image and marker
         f_ppp <- group_ppp[[image_name]][[marker]]
         f_densities <- group_densities[[image_name]][[marker]]
-        f_contour <- group_contour[[image_name]][[marker]]
         
-        # Plot the point pattern
+        # Use zlim parameter from marker_min_max
+        zlim_values = c(0, marker_min_max[[marker]]$max)
+        brks <- seq(0, marker_min_max[[marker]]$max, length.out = 6)
+        
         plot(f_densities, 
-             col = colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2")), 
-             main = ifelse(marker == "CD8", unfactor(responses$Response[sapply(responses$ID, function(x) any(x == paste(gsub(".*_([0-9]+)\\.tif$", "\\1", image_name))))]), paste(gsub(".*_([0-9]+)\\.tif$", "\\1", image_name))),
-             axes = 0,
-             box = FALSE)
+             col = colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick1")), 
+             zlim = zlim_values,
+             main = ifelse(marker == "CD8", unfactor(responses$Response[sapply(responses$ID, function(x) any(x == paste(gsub(".*_([0-9]+)\\.tif$", "\\1", image_name))))]), paste(gsub(".*_([0-9]+)\\.tif$", "\\1", image_name))))
         
-        contour(f_contour,
+        contour(f_densities,
                 add = T,
                 labels = NULL,
-                axes = 0,
-                box = FALSE,
                 drawlabels = FALSE,
                 nlevels = 5)
         
@@ -1215,6 +1207,7 @@ for (marker in marker_order) {
     }
   }
 }
+
 # VISUALS - Quadrat plots ----
 par(mfrow = c(2, 3))
 for (marker in immune_markers) {
@@ -1247,62 +1240,65 @@ for (marker in immune_markers) {
 response_order <- c("SD", "PD", "CR", "PR")
 marker_order <- c("LAG3", "CD3", "TIM3", "CK", "PD1","CD8")
 
+# Calculate min and max for each marker
+marker_min_max <- lapply(marker_order, function(marker) {
+  counts <- unlist(lapply(response_order, function(response_group) {
+    Q <- grouped_by_response[[response_group]][[marker]]
+    as.vector(round(attributes(Q)$quadratcount, 3))
+  }))
+  c(min = min(counts), max = max(counts))
+})
+
+names(marker_min_max) <- marker_order
+
 # Initialize plotting layout
-par(mfrow = c(6, 4), mar = c(0, 4, 2, 0), bty = "n", oma = c(0, 0, 4, 0)) # 6 rows for markers, 4 columns for response groups
+par(mfrow = c(6, 4), mar = c(0, 2, 2, 2), oma = c(0, 0, 0, 3))  # Added room on the right for the colorbar
 
-# Initialize variables to track the current row and column
-current_row <- 1
-# current_col <- 1
-
-# Loop through each immune marker in the specified order
+# Loop through each immune marker
 for (marker in marker_order) {
   
-  # Reset the current column counter for each new row
-  current_col <- 1
+  # Generate the color palette
+  marker_min <- marker_min_max[[marker]]['min']
+  marker_max <- marker_min_max[[marker]]['max']
+  cols <- colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2"))(100)
   
-  # Loop through each response group in the specified order
+  # Loop through each response group
   for (response_group in response_order) {
     
-    # Retrieve the density maps for the selected response group and marker
+    # Retrieve the density maps
     Q <- grouped_by_response[[response_group]][[marker]]
     
-    # Extract quadrat information
-    counts <- as.vector(round(attributes(Q)$quadratcount,3))
-    tiles <- attr(Q, "tess")$tiles
-    
-    # Create a color palette
-    cols <- colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2"))(length(unique(counts)))
-    
     # Plot the window
-    plot(attr(Q, "tess")$window, main = NULL, axes = 0, box = FALSE)
+    plot(attr(Q, "tess")$window, main = NULL, box = FALSE)
     
-    # Loop through each tile to draw and color it
+    # Loop to draw and color each tile
+    counts <- as.vector(round(attributes(Q)$quadratcount, 3))
+    tiles <- attr(Q, "tess")$tiles
     for (i in 1:length(tiles)) {
       tile <- tiles[[i]]
       count <- counts[i]
-      
-      # Get the color for this count
-      col_idx <- findInterval(count, sort(unique(counts)))
-      
-      # Draw the tile
+      col_idx <- findInterval(count, seq(marker_min, marker_max, length.out = length(cols)))
       plot(tile, add = TRUE, col = cols[col_idx], border = "black")
     }
-    # 
-    # # Overlay the counts
-    # plot.quadratcount(Q, add = TRUE, main = paste(marker,"-",response_group), entries = round(attributes(Q)$quadratcount,3))
     
-    if (response_group == response_order[1]) {
-      mtext(marker, side = 2, line = 2, adj = 1, cex = 1)
+    if (response_group == "SD") {
+      mtext(marker, side = 2, line = 0, cex = 1)
+      
+    } else if (response_group == "PR") {
+      par(xpd = NA)  # Allow plotting in the outer margins
+      legend("right", inset = c(-0.1, 0),  # Adjust inset to move legend
+             legend = rev(round(seq(marker_min, marker_max, length.out = 5), 3)),
+             fill = rev(colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2"))(5)), 
+             bty = "n", cex = 0.8, title = NULL, box.lty=0)
+      par(xpd = FALSE)  # Restore clipping
     }
   }
-  
-  # Increment the current row
-  current_row <- current_row + 1
 }
 
-# Add the response group names above each column
+# Adjust column_positions to better align text
 column_positions <- seq(1/8, 1, by = 1/4)
-mtext(response_order, side = 3, line = -1, outer = TRUE, at = column_positions, cex = 1)
+mtext(response_order, side = 3, line = -2, outer = TRUE, at = column_positions, cex = 1)
+
 # STATS - Kruskall Wallis ----
 # Initialize an empty data frame to store the summary statistics
 summary_table <- data.frame()
@@ -1362,7 +1358,7 @@ for (marker in names(grouped_quadrats[[1]])) {
 
 # Perform FDR correction for Kruskal-Wallis p-values
 summary_table <- summary_table %>% 
-  mutate(FDR_adj_p_value = p.adjust(KW_p_value, method = "bonferroni"))
+  mutate(FDR_adj_p_value = p.adjust(KW_p_value, method = "fdr"))
 
 # Sort the summary table by FDR-adjusted p-values
 summary_table <- summary_table %>% 
@@ -1372,10 +1368,8 @@ summary_table <- summary_table %>%
 print(summary_table)
 # STATS - Dunn test ----
 # Initialize an empty data frame to store the Dunn's test results
-dunn_results <- data.frame()
-
 for (i in 1:nrow(summary_table)) {
-  if (!is.na(summary_table$KW_p_value[i]) && summary_table$KW_p_value[i] < 0.05) {
+  if (!is.na(summary_table$KW_p_value[i]) && summary_table$KW_p_value[i] <= 0.05) {
     marker_bin <- summary_table[i, c("Marker", "Bin"), drop = FALSE]
     
     # Extract the marker and bin index
@@ -1385,13 +1379,13 @@ for (i in 1:nrow(summary_table)) {
     # Extract the data for the current bin
     bin_data <- combined_matrix[, bin_index]
     
-    # Create a temporary data frame for this marker and bin
+    # Temp df for data and bin
     temp_data <- data.frame(Value = bin_data, Response = as.factor(group_vector))
     
     # Perform Dunn's test
-    dunn_result <- dunnTest(Value ~ Response, data = temp_data, method = "bonferroni")
+    dunn_result <- dunnTest(Value ~ Response, data = temp_data, method = "bh")
     
-    # Create a temporary data frame to store the results
+    # Temp df to store results
     temp_df <- data.frame(
       Marker = rep(marker, nrow(dunn_result$res)),
       Bin = rep(bin_index, nrow(dunn_result$res)),
@@ -1401,27 +1395,37 @@ for (i in 1:nrow(summary_table)) {
       Adj_P = dunn_result$res$`P.adj`
     )
     
-    # Append to the Dunn's test results table
+    # Append to the Dunn's table
     dunn_results <- rbind(dunn_results, temp_df)
-  }else{
-    print(paste("Error encountered in:", i))
+    
+  } else {
+    if (is.na(summary_table$KW_p_value[i])) {
+      print(paste("NA encountered in:", i))
+    } else if (summary_table$KW_p_value[i] >= 0.05) {
+      print(paste("P-value >= 0.05 encountered in:", i))
+    }
   }
 }
 
-# Sort the summary table by FDR-adjusted p-values
+# Sort by FDR adj
 dunn_results <- dunn_results %>% 
   arrange(Adj_P)
 
-# Print the Dunn's test results
 print(dunn_results)
+
 # STATS - Optimal number of bins ----
 # Function to calculate RSS for a given number of bins
 calculate_RSS <- function(df, n_bins) {
   # Initialize counts for each bin
-  bin_counts <- table(df$bin_x, df$bin_y)
+  bin_counts <- table(df$bin_x, df$bin_y, df$Freq)
   
   # Convert table to data frame
   bin_counts_df <- as.data.frame(as.table(bin_counts))
+  if(ncol(bin_counts_df) == length(c("bin_x", "bin_y", "Freq"))){
+    names(bin_counts_df) <- c("bin_x", "bin_y", "Freq")
+  } else {
+    print("Eidolon help me please")
+  }
   names(bin_counts_df) <- c("bin_x", "bin_y", "Freq")
   
   # Make sure bin_counts includes zeros for empty bins
@@ -1432,6 +1436,12 @@ calculate_RSS <- function(df, n_bins) {
   # Calculate the observed proportions
   total_points <- sum(bin_counts_df$Freq)
   observed_proportions <- bin_counts_df$Freq / total_points
+  if(length(observed_proportions) == length(expected_proportions)) {
+    residuals <- observed_proportions - expected_proportions
+  } else {
+    print("This wrong too gah")
+  }
+    
   
   # Calculate the expected counts and proportions
   base_count <- floor(total_points / n_bins)
@@ -1522,47 +1532,45 @@ for (n_bins in 15:100) {
 
 # STATS - Bandwidth testing ----
 # Function to calculate optimal bandwidths for each image
-calculate_bandwidths <- function(df) {
+calculate_bandwidths <- function(image_name, df) {
+  # Subset data for the current image
+  image_data <- df[df$Image == image_name,]
+  center_x_image <- mean(image_data$X)
+  center_y_image <- mean(image_data$Y)
+  w <- disc(radius=max_radius, centre=c(center_x_image, center_y_image))
   
-  # Create an empty list to store results
-  bandwidth_results <- list()
+  # Create a point pattern
+  ppp_image <- ppp(image_data$X, image_data$Y, w)
   
-  # Unique image names
-  image_names <- unique(df$Image)
+  # Calculate bandwidths
+  bw_diggle_val <- bw.diggle(ppp_image)
+  ppl_val <- bw.ppl(ppp_image)
+  CvL_val <- bw.CvL(ppp_image)
+  adapt_val <- bw.CvL.adaptive(ppp_image)
+  abraham_val <- bw.abram.ppp(ppp_image)
   
-  # Loop through each image
-  for (image_name in image_names) {
-    # Subset data for the current image
-    image_data <- df[df$Image == image_name,]
-    center_x_image <- mean(image_data$X)
-    center_y_image <- mean(image_data$Y)
-    w <- disc(radius=max_radius, centre=c(center_x_image, center_y_image))
-    
-    # Create a point pattern
-    ppp_image <- ppp(image_data$X, image_data$Y, w)
-    
-    # Calculate bandwidths
-    bw_diggle_val <- bw.diggle(ppp_image)
-    ppl_val <- bw.ppl(ppp_image)
-    CvL_val <- bw.CvL(ppp_image)
-    
-    # Store results in a list
-    bandwidth_results[[image_name]] <- list(bw_diggle = bw_diggle_val, ppl = ppl_val, cvl = CvL_val)
-    print(paste("Bandwidths processed for image:", image_name))
-  }
+  # Store results in a list
+  result <- list(bw_diggle = bw_diggle_val, ppl = ppl_val, cvl = CvL_val, adpt = adapt_val, abraham = abraham_val)
+  print(paste("Bandwidths processed for image:", image_name))
   
-  return(bandwidth_results)
+  return(result)
 }
 
-# Calculate bandwidths for each image
-bandwidths <- calculate_bandwidths(eda_df)
+cl <- makeCluster(parallel::detectCores())
+clusterExport(cl, list("calculate_bandwidths", "max_radius", "eda_df"))
+clusterEvalQ(cl, library(spatstat))
+bandwidth_results <- parallel::parLapply(cl, image_names, function(image_name) {
+  calculate_bandwidths(image_name, eda_df)
+})
 
 # VISUALS - Bandwidth tests ----
 # Plot the distribution of optimal bandwidths
-par(mfrow = c(3, 1))
-hist(sapply(bandwidths, function(x) x$bw_diggle), main = 'bw.diggle', xlab = 'Bandwidth', breaks = 20)
-hist(sapply(bandwidths, function(x) x$ppl), main = 'bw.ppl', xlab = 'Bandwidth', breaks = 20)
-hist(sapply(bandwidths, function(x) x$cvl), main = 'bw.CvL', xlab = 'Bandwidth', breaks = 20)
+par(mfrow = c(5, 1))
+hist(sapply(bandwidth_results, function(x) x$bw_diggle), main = NULL, xlab = 'Bandwidth', breaks = 20)
+hist(sapply(bandwidth_results, function(x) x$ppl), main = NULL, xlab = 'Bandwidth', breaks = 20)
+hist(sapply(bandwidth_results, function(x) x$cvl), main = NULL, xlab = 'Bandwidth', breaks = 20)
+hist(sapply(bandwidth_results, function(x) x$adpt), main = NULL, xlab = 'Bandwidth', breaks = 20)
+hist(unlist(sapply(bandwidth_results, function(x) x$abraham)), main = NULL, xlab = 'Bandwidth', breaks = 20)
 
 ########################################### FEATURE 3 - MARKER HEATMAP (S/T) -----
 # EXTRACT - MARKER INTENSITY HEATMAP (SPATSTAT continuous?) ----
