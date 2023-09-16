@@ -142,7 +142,7 @@ responses %>%
 # Number of cells (QQplot)
 qqPlot(responses$n_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
 
-## 1.1. VISUALS - Barplot of age distribution (ID) ----
+## 1.2. VISUALS - Barplot of age distribution (ID) ----
 # Overall age distribution
 responses %>%
   group_by(ID) %>%
@@ -323,7 +323,7 @@ ggplot(long_eda_df, aes(x = Value + shift_constant, y = Response, fill = Respons
   theme_minimal()
 
 ############################################ PHENOTYPING ATTEMPT ----
-# 1. Determining cutoff V1.0 (default) ----
+# 1. Determining cutoff (Version 1) ----
 # Threshold dataset
 img_threshs <- eda_df %>% 
   dplyr::select(Image, ID) %>% 
@@ -394,7 +394,7 @@ merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
-## 1.1. Determining cutoff V3.0 (not working currently) ----
+## 1.1. Determining cutoff (Version 2) ----
 img_threshs <- eda_df %>% 
   select(Image, ID) %>% 
   distinct() %>%
@@ -434,9 +434,49 @@ optimal_cutoff_valley <- function(intensity_values) {
   # Get highest peak (now corresponds to the most prominent valley in original)
   highest_valley <- peaks_df$w_v[1]
   
+  if (length(peaks_df)<2) {
+    intensity_density <- stats::density(intensity_values, na.rm=TRUE)
+    
+    # Peaks
+    peak_ycords <- pracma::findpeaks(intensity_density$y)[,1]
+    peak_xcords <- intensity_density$x[match(peak_ycords, intensity_density$y)]
+    
+    # Valleys
+    valley_ycords <- pracma::findpeaks(-intensity_density$y)[,1] * -1
+    valley_xcords <- intensity_density$x[match(valley_ycords, intensity_density$y)]
+    
+    # Sort peaks to find the highest ones
+    peaks_df <- data.frame(peak_xcords, peak_ycords) %>%
+      arrange(desc(peak_ycords))
+    
+    # Get highest peak
+    highest_peak <- peaks_df$peak_ycords[1]
+    
+    # Check for second peak as high as 10% of the highest peak
+    if (nrow(peaks_df) >= 2 && peaks_df$peak_ycords[2] >= 0.10 * highest_peak) {
+      
+      # Find the valley between these two peaks
+      first_peak_xcord <- peaks_df$peak_xcords[1]
+      second_peak_xcord <- peaks_df$peak_xcords[2]
+      valley_between <- valley_xcords[which(valley_xcords > min(first_peak_xcord, second_peak_xcord) & valley_xcords < max(first_peak_xcord, second_peak_xcord))]
+      if(length(valley_between) > 0) {
+        return(valley_between[1])
+      }
+    }
+    
+    # Determine the cutoff based on the first valley after the highest peak
+    ycord_max_density <- max(intensity_density$y)
+    xcord_max_density <- intensity_density$x[match(ycord_max_density, intensity_density$y)]
+    valley_df <- data.frame(valley_xcords, valley_ycords) %>%
+      filter(valley_xcords >= xcord_max_density, 
+             valley_ycords <= 0.25 * ycord_max_density)
+    
+    return(valley_df$valley_xcords[1])
+  }else{
+  
   # You can adjust this logic based on how you want to use this metric for thresholding
-  # For this example, we're returning the x corresponding to the highest value in w_v
   return(peaks_df$x[1])
+  }
 }
 
 # Use dplyr to group, summarize and compute the optimal cutoff based on valleys
@@ -524,7 +564,7 @@ rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, 
 
 # 3. VISUALS - Phenotype dotplot (IMAGES) ----
 selected_image <- SPIAT_tifs[random()] # 1 to 90 possible images ----
-
+selected_image <- SPIAT_tifs[65]
 # Join final_df and responses
 final_df_joined <- final_df %>%
   left_join(responses, by = "ID")
@@ -537,7 +577,7 @@ p <- final_df_joined %>%
   labs(
     title = paste(
       selected_image,
-      "(", first(unique(final_df_joined$Response[final_df_joined$Image == selected_image])), ")",
+      "(", first(unique(final_df_joined$Response[final_df_joined$Image == 1])), ")",
       sep = " "
     ),
     x = "X coordinate",
