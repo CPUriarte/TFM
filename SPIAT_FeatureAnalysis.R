@@ -20,12 +20,14 @@ library(grid)
 library(plotly)
 library(tidyverse)
 library(SPIAT)
+library(parallel)
+library(parallelly)
 
 ############################################ DATA READING AND FORMATTING ---------------------------------------------
 ## 1.1. READING IN DATA ----
 raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
-responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
 
+responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
 ## 1.2. FORMATTING FOR EDA ----
 # Treatment response dataset
 responses <- responses[, -c(4, 6:8)] # Eliminate unnecessary columns
@@ -88,10 +90,11 @@ responses <- responses %>%
 
 responses$SPIAT_indices <- lapply(responses$image_names, function(x) match(x, SPIAT_tifs))
 
-# Limpieza de la memoria
 responses$Response <- droplevels(responses$Response, "Not evaluable/NE")
+
 levels(responses$Response) <- c("CR", "PR", "PD", "SD")
 
+# Cleaning memory
 rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector"))
 
 ############################################ SPIAT GLIMPSE (SPATIAL IMAGE ANALYSIS OF TISSUES) ----
@@ -459,10 +462,10 @@ average_nearest_neighbor_index(
 
 ########################################### FEATURE 1 - PHENOTYPES -----
 # EXTRACT - Predicted phenotypes ----
-## PROCESS - Extraction and re-ordering ----
+# PROCESS - Extraction and re-arrangement ----
 spiat_predicted_phenotypes <- list()
 
-# Create a custom function for extracting the necessary details from the SpatialExperiment object
+# Custom extraction function
 extract_data_from_spatial_experiment <- function(spe_object) {
   spatial_coords <- spe_object@int_colData@listData$spatialCoords
   phenotype <- spe_object@colData@listData$Phenotype
@@ -470,7 +473,7 @@ extract_data_from_spatial_experiment <- function(spe_object) {
   return(list(spatial_coords = spatial_coords, phenotype = phenotype))
 }
 
-# Use pblapply (from pbapply package) to loop through each image in SPIAT_tifs
+# Predict all phenotypes for all images
 spiat_predicted_phenotypes <- pblapply(SPIAT_tifs, function(selected_image) {
   
   # Filter data based on the current image
@@ -531,6 +534,7 @@ unique_phenotypes <- unique(phenotype_vector)
 # Step 3: Create a dataframe with image names and columns named based on unique phenotypes
 spiat_pheno_counts <- data.frame(image_name = names(spiat_predicted_phenotypes),
                                  matrix(NA, ncol = length(unique_phenotypes), nrow = length(spiat_predicted_phenotypes)))
+
 colnames(spiat_pheno_counts) <- c("Image", unique_phenotypes)
 
 # Step 4 (Continuation): Iterate through images, count phenotypes, and update the dataframe
@@ -583,7 +587,6 @@ primary_weights <- sapply(current_cols, get_primary_weight)
 secondary_weights <- sapply(current_cols, get_secondary_weight)
 
 # Combine primary and secondary weights to get the order
-# Use primary weight * a big number (like 1000) + secondary weight
 combined_weights <- primary_weights * 1000 + secondary_weights
 
 # Sort columns based on combined weights
@@ -592,10 +595,10 @@ ordered_cols <- current_cols[order(combined_weights)]
 # Add the "Image", "None", and "CK" columns at the start
 final_order <- c("Image","ID", "Response", "None", "CK", ordered_cols)
 
-# Re-arrange columns of the dataframe based on final_order
+# Re-arrange columns based on final_order
 spiat_pheno_counts <- spiat_pheno_counts[, final_order]
 
-## PROCESS - Convert to proportions ----
+# PROCESS - Convert to proportions ----
 # Step 1: Reshape the data
 spiat_long_format <- spiat_pheno_counts %>%
   select(-Image) %>%
@@ -640,7 +643,7 @@ spiat_aggregated_pheno <- spiat_aggregated_pheno %>%
 # So that abscent markers are not ignored but counted as 0
 spiat_pheno_counts[,4:67] <- apply(spiat_pheno_counts[,4:67], 2, function(x) ifelse(is.na(x), 0, x))
 
-# Aggregation by summation (since phenotypes are count, we test proportions instead of counts to lessen the effects of repeated paired measures)
+# Aggregation by summation (since phenotypes are counts, we test proportions instead of counts to lessen the effects of repeated paired measures)
 spiat_pheno_temp <- spiat_pheno_counts %>%
   select(-Image) %>%  # Exclude the Image column
   group_by(ID, Response) %>%
@@ -710,7 +713,7 @@ rm(col_index, current_cols, i, image, image_name, image_phenotype_counts, ordere
    unique_phenotypes, primary_weights, secondary_weights, combined_weights, get_primary_weight, get_secondary_weight, final_order, spiat_pheno_temp, 
    marker, markers, p_val, dunn_df, dunn_results, lev_test, spiat_long_format, spiat_phenoKW, spiat_total_cells_per_ID)
 
-## RESULTS - Statistics (Aqui falta point plot con p valores) ----
+# RESULTS - Statistics ----
 print(
   spiat_phenoKWfdr %>% 
     filter(p.value < 0.05) %>% 
@@ -723,8 +726,7 @@ print(
     arrange(P.adj)
 )
 
-## VISUALS - Horizontal stacked barplots (PATIENTS) ----
-# Generate the base plot
+# VISUALS - Horizontal stacked barplots (PATIENTS) ----
 # Merge the datasets
 merged_data <- merge(spiat_long_with_props, responses[, c("ID", "Response")], by = "ID")
 
@@ -746,7 +748,7 @@ gg <- ggplot(merged_data, aes(x=factor(ID), y=spiat_Prop, fill=spiat_Phenotype))
 
 gg
 
-## VISUALS - Horizontal stacked barplots (RESPONSES) ----
+# VISUALS - Horizontal stacked barplots (RESPONSES) ----
 spiat_plot <- ggplot(spiat_aggregated_pheno, aes(x = spiat_Response, y = spiat_GroupProp, fill = spiat_Phenotype)) +
   geom_bar(stat = "identity") +
   coord_flip() +
@@ -848,7 +850,7 @@ spiat_scattercount <- pblapply(SPIAT_tifs, function(selected_image) {
 # Name list entries
 names(spiat_scattercount) <- sapply(spiat_scattercount, function(x) x$Image)
 
-### Matching response and ID
+## Matching response and ID
 # Update each element in spiat_scattercount
 spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
   
@@ -875,16 +877,16 @@ spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
 
 nq <- 7 # Select n of quadrats (<90) ----
 # PROCESSING - Creates PPP, density maps and quadrats (ALL IMAGES) ---- 
-allY_list <- lapply(spiat_scattercount, function(x) x$Y)
-center_y <- median(unlist(allY_list))
 
 allX_list <- lapply(spiat_scattercount, function(x) x$X)
-center_x <- median(unlist(allX_list))
+allY_list <- lapply(spiat_scattercount, function(x) x$Y)
+
+center_x <- mean(unlist(allX_list))
+center_y <- mean(unlist(allY_list))
 
 # Calculate distances from center to each point
 distances <- sqrt((unlist(allX_list) - center_x)^2 + (unlist(allY_list) - center_y)^2)
-max_radius <- max(distances)
-
+radius <- max(distances)
 w <- disc(radius=max_radius, centre=c(center_x, center_y))
 
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
@@ -968,13 +970,12 @@ for (image_name in names(spiat_scattercount)) {
                                                            Response = response_available,
                                                            stringsAsFactors = FALSE))
       }
-    }
+    } # Monte Carlo requires at least as many cells as quadrats. This else skips images with lower cells and stores them in skipped_image
     
-    # Store each image's marker and quadrat test
-    marker_ppps[[marker]] <- P
-    marker_density_maps[[marker]] <- D
-    q_count[[marker]] <- Q
-    qtest_images[[marker]] <- q_test
+    marker_ppps[[marker]] <- P # Store PPPs
+    marker_density_maps[[marker]] <- D # Store density maps
+    q_count[[marker]] <- Q # Store quadrat counts
+    qtest_images[[marker]] <- q_test # Store quadrat tests
     
   }
   
@@ -1102,16 +1103,16 @@ for (response_group in unique(responses$Response)) {
     }
   }
   
-  # Now, aggregate each marker by the median
+  # Now, aggregate each marker by the mean
   for (marker in names(grouped_response_data)) {
     
     # Combine all the counts for this marker into a matrix
     marker_matrix <- do.call(rbind, lapply(grouped_response_data[[marker]], function(x) attributes(x)$quadratcount))
     
-    # Calculate the median for each quadrant
+    # Calculate the mean for each quadrant
     mean_val <- apply(marker_matrix, 2, mean, na.rm = TRUE)
     
-    # Create a new quadratcount object with the median values but retaining the owin object and tess attributes
+    # Create a new quadratcount object with the mean values but retaining the owin object and tess attributes
     new_quadrat <- grouped_response_data[[marker]][[1]]
     attributes(new_quadrat)$quadratcount <- mean_val
     
@@ -1206,33 +1207,6 @@ for (marker in marker_order) {
       }
     }
   }
-}
-
-# VISUALS - Quadrat plots ----
-par(mfrow = c(2, 3))
-for (marker in immune_markers) {
-  
-  # Retrieve the density maps for the selected image
-  Q <- quadrats[[selected_image]][[marker]]
-  
-  plot(Q, main = print(paste(marker, "-", sum(Q))))
-  
-}
-# VISUALS - Quadrat test plots ----
-par(mfrow = c(2, 3))
-for (marker in immune_markers) {
-  plot(qtest_results[[selected_image]][[marker]], main = marker)
-}
-
-# VISUALS - Quadrat proportion plots ----
-par(mfrow = c(2, 3))
-for (marker in immune_markers) {
-  
-  # Retrieve the density maps for the selected image
-  Q <- transformed_quadrats[[selected_image]][[marker]]
-  
-  plot(Q, main = print(paste(marker, "-", round(sum(Q), 2))))
-  
 }
 
 # VISUALS - Results ----
@@ -1414,121 +1388,72 @@ dunn_results <- dunn_results %>%
 print(dunn_results)
 
 # STATS - Optimal number of bins ----
-# Function to calculate RSS for a given number of bins
-calculate_RSS <- function(df, n_bins) {
-  # Initialize counts for each bin
-  bin_counts <- table(df$bin_x, df$bin_y, df$Freq)
-  
-  # Convert table to data frame
-  bin_counts_df <- as.data.frame(as.table(bin_counts))
-  if(ncol(bin_counts_df) == length(c("bin_x", "bin_y", "Freq"))){
-    names(bin_counts_df) <- c("bin_x", "bin_y", "Freq")
-  } else {
-    print("Eidolon help me please")
-  }
-  names(bin_counts_df) <- c("bin_x", "bin_y", "Freq")
-  
-  # Make sure bin_counts includes zeros for empty bins
-  all_possible_bins <- expand.grid(bin_x = unique(df$bin_x), bin_y = unique(df$bin_y))
-  bin_counts_df <- merge(all_possible_bins, bin_counts_df, all.x = TRUE, by = c("bin_x", "bin_y"))
-  bin_counts_df[is.na(bin_counts_df)] <- 0
-  
-  # Calculate the observed proportions
-  total_points <- sum(bin_counts_df$Freq)
-  observed_proportions <- bin_counts_df$Freq / total_points
-  if(length(observed_proportions) == length(expected_proportions)) {
-    residuals <- observed_proportions - expected_proportions
-  } else {
-    print("This wrong too gah")
-  }
-    
-  
-  # Calculate the expected counts and proportions
-  base_count <- floor(total_points / n_bins)
-  extra_counts = total_points %% n_bins
-  
-  # Distribute the "extra counts" randomly
-  set.seed(123) # for reproducibility
-  extra_indices <- sample(1:n_bins, extra_counts)
-  
-  expected_counts = rep(base_count, n_bins)
-  expected_counts[extra_indices] = expected_counts[extra_indices] + 1
-  
-  expected_proportions = expected_counts / total_points
-  
-  # Calculate residuals for each bin
-  residuals <- observed_proportions - expected_proportions
-  
-  # Calculate RSS
-  RSS <- sum(residuals^2)
-  
-  return(RSS)
-}
+# User-provided data and information
+allX_list <- lapply(spiat_scattercount, function(x) x$X)
+allY_list <- lapply(spiat_scattercount, function(x) x$Y)
 
-# Calculate the center and largest radius of all data
-all_data_center_x <- mean(eda_df$X)
-all_data_center_y <- mean(eda_df$Y)
-largest_radius <- max(sqrt((eda_df$X - all_data_center_x)^2 + (eda_df$Y - all_data_center_y)^2))
+center_x <- mean(unlist(allX_list))
+center_y <- mean(unlist(allY_list))
 
-# Make the observation window 5% larger
-window_radius <- largest_radius * 1.05
-
-# Define the radius of the influence region (this should be the same as your optimal bandwidth)
-radius <- 40  # Replace with your optimal bandwidth if different
-
+# Calculate distances from center to each point
+distances <- sqrt((unlist(allX_list) - center_x)^2 + (unlist(allY_list) - center_y)^2)
+radius <- max(distances)
+w <- disc(radius=max_radius, centre=c(center_x, center_y))
 markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
-# Initialize the bin_metrics dataframe
-bin_metrics <- data.frame(I = character(), M = character(), stringsAsFactors = FALSE)
+# Initialize a dataframe to store the overall RSS for each number of bins
+overall_bin_metrics <- data.frame(BinNumber = numeric(), OverallRSS = numeric(), stringsAsFactors = FALSE)
 
-# Loop through each number of bins from 15 to 100
-for (n_bins in 15:100) {
-  
-  # Temporary dataframe to store the current bin_metrics
-  temp_bin_metrics <- data.frame(I = character(), M = character(), RSS = numeric(), stringsAsFactors = FALSE)
-  
-  # Loop through each image and marker
+# Function to calculate RSS for a given n_bins
+calc_RSS <- function(n_bins) {
+  overall_RSS <- 0
   for (image in names(spiat_scattercount)) {
+    image_data <- spiat_scattercount[[image]]
+    image_data_df <- as.data.frame(image_data)
     for (marker in markers) {
-      
-      # Subset data for current image and marker
-      image_data <- spiat_scattercount[[image]]
-      image_data_df <- as.data.frame(image_data)
-      sub_df <- image_data_df[grepl(marker, image_data_df$P, fixed = TRUE), ]
-      
-      # # Filter data points that fall within the circular window
-      # sub_df <- sub_df %>%
-      #   filter(sqrt((X - all_data_center_x)^2 + (Y - all_data_center_y)^2) <= window_radius)
-      
-      # Bin the data within the circular window
-      sub_df <- sub_df %>%
-        mutate(
-          bin_x = floor((X - all_data_center_x) / radius),
-          bin_y = floor((Y - all_data_center_y) / radius)
-        )
-      
-      # Calculate RSS
-      RSS <- calculate_RSS(sub_df, n_bins)
-      
-      # Append to the temporary dataframe
-      temp_bin_metrics <- rbind(temp_bin_metrics, data.frame(I = image, M = marker, RSS = RSS))
-      print(marker)
+      sub_df <- image_data_df[grepl(marker, image_data_df$P, fixed = TRUE),]
+      if (nrow(sub_df) == 0) {
+        next
+      }
+      point_pattern <- ppp(sub_df$X, sub_df$Y, window = w, checkdup = F)
+      bin_counts <- quadratcount(point_pattern, nx = n_bins, keepempty = T)
+      observed_counts <- as.numeric(bin_counts)
+      total_points = nrow(sub_df)
+      expected_counts = rep(total_points / (n_bins^2), n_bins^2)
+      RSS = sum((observed_counts - expected_counts)^2)
+      overall_RSS <- overall_RSS + RSS
     }
-    print(image)
+    print(paste("Finished processing image:", image, "for", n_bins, "bins."))
   }
-  
-  # Rename the RSS column to the current n_bins
-  names(temp_bin_metrics)[names(temp_bin_metrics) == "RSS"] <- as.character(n_bins)
-  
-  # Merge with the existing bin_metrics dataframe
-  if (nrow(bin_metrics) == 0) {
-    bin_metrics <- temp_bin_metrics
-  } else {
-    bin_metrics <- merge(bin_metrics, temp_bin_metrics, by = c("I", "M"), all = TRUE)
-  }
-  
-  print(paste(n_bins, "bins test completed."))
+  print(paste("Finished processing for n_bins:", n_bins))
+  return(data.frame(BinNumber = n_bins, OverallRSS = overall_RSS))
 }
+
+# Use parallel processing
+n_cores <- detectCores(logical = T)  # Number of physical cores
+
+# If you want to leave one core free for other tasks, use (n_cores - 1)
+cl <- makeCluster(n_cores)
+
+# Export variables to the cluster
+clusterExport(cl, c('spiat_scattercount', 'markers', 'w'))
+
+# Load the required packages on each node in the cluster
+clusterEvalQ(cl, {
+  library(spatstat)
+})
+
+# Apply function in parallel
+result_list <- parLapply(cl, 5:21, calc_RSS)
+
+# Combine results
+overall_bin_metrics <- do.call(rbind, result_list)
+
+# Stop the cluster
+stopCluster(cl)
+
+# Plot the results
+plot(overall_bin_metrics$BinNumber, overall_bin_metrics$OverallRSS, type="b", xlab="Number of Bins", ylab="Overall RSS")
 
 # STATS - Bandwidth testing ----
 # Function to calculate optimal bandwidths for each image
