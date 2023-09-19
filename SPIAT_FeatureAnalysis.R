@@ -22,6 +22,9 @@ library(tidyverse)
 library(SPIAT)
 library(parallel)
 library(parallelly)
+library(pheatmap)
+library(igraph)
+library(heatmaply)
 
 ############################################ DATA READING AND FORMATTING ---------------------------------------------
 ## 1.1. READING IN DATA ----
@@ -875,19 +878,18 @@ spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
   return(x)
 })
 
-nq <- 7 # Select n of quadrats (<90) ----
+nq <- 15 # Select n of quadrats (<90) ----
 # PROCESSING - Creates PPP, density maps and quadrats (ALL IMAGES) ---- 
-
 allX_list <- lapply(spiat_scattercount, function(x) x$X)
 allY_list <- lapply(spiat_scattercount, function(x) x$Y)
 
-center_x <- mean(unlist(allX_list))
-center_y <- mean(unlist(allY_list))
+center_x <- median(unlist(allX_list))
+center_y <- median(unlist(allY_list))
 
 # Calculate distances from center to each point
 distances <- sqrt((unlist(allX_list) - center_x)^2 + (unlist(allY_list) - center_y)^2)
 radius <- max(distances)
-w <- disc(radius=max_radius, centre=c(center_x, center_y))
+w <- disc(radius=radius, centre=c(center_x, center_y))
 
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
@@ -1234,7 +1236,7 @@ for (marker in marker_order) {
   # Generate the color palette
   marker_min <- marker_min_max[[marker]]['min']
   marker_max <- marker_min_max[[marker]]['max']
-  cols <- colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2"))(100)
+  cols <- colorRampPalette(c("white", "pink", "yellow", "orange", "red"))(10)
   
   # Loop through each response group
   for (response_group in response_order) {
@@ -1273,51 +1275,50 @@ for (marker in marker_order) {
 column_positions <- seq(1/8, 1, by = 1/4)
 mtext(response_order, side = 3, line = -2, outer = TRUE, at = column_positions, cex = 1)
 
-# STATS - Kruskall Wallis ----
-# Initialize an empty data frame to store the summary statistics
+# STATS - Quadrat analysis ----
+# Store the summary statistics
 summary_table <- data.frame()
 
 # Loop through each marker
 for (marker in names(grouped_quadrats[[1]])) {
   
-  # Initialize an empty list to store the data for Kruskal-Wallis and Levene's tests
+  # Store the data for Kruskal-Wallis and Levene's tests
   all_data <- list()
   
-  # Loop through each unique response
   for (response_group in unique(responses$Response)) {
     
-    # Get IDs belonging to the current response group
+    # IDs belonging to the current response
     patient_ids <- unique(responses$ID[responses$Response == response_group])
     
-    # Extract the data for the current marker and response group
+    # Extract the data for current marker and response
     marker_data <- lapply(patient_ids, function(id) grouped_quadrats[[as.character(id)]][[marker]])
     
-    # Assuming each element in marker_data is a vector, bind them into a matrix
+    # Bind into matrix
     marker_matrix <- do.call(rbind, marker_data)
     
-    # Store the data for later use in Kruskal-Wallis test
+    # Store the data for later KW
     all_data[[as.character(response_group)]] <- marker_matrix
   }
   
-  # Combine all the matrices into one large matrix
+  # Combine all the matrices
   combined_matrix <- do.call(rbind, all_data)
   
-  # Create a group vector for Kruskal-Wallis test
+  # Group vector for Kruskal-Wallis
   group_vector <- as.vector(rep(names(all_data), sapply(all_data, nrow)))
   
-  # Perform Kruskal-Wallis and Levene's tests for each bin (column in combined_matrix)
+  # KW and Levene's to each bin (column in combined_matrix)
   for (bin_index in 1:ncol(combined_matrix)) {
     
     # Data for the current bin
     bin_data <- combined_matrix[, bin_index]
     
     # Perform Levene's test
-    levene_result <- leveneTest(y = bin_data, group = group_vector)$`Pr(>F)`[1]
+    levene_result <- leveneTest(y = bin_data, group = as.factor(group_vector))$`Pr(>F)`[1]
     
     # Perform Kruskal-Wallis test
     kw_result <- kruskal.test(bin_data ~ group_vector)$p.value
     
-    # Create a temporary data frame to store the results
+    # Temp df to store results
     temp_df <- data.frame(
       Marker = marker,
       Bin = bin_index,
@@ -1330,36 +1331,47 @@ for (marker in names(grouped_quadrats[[1]])) {
   }
 }
 
-# Perform FDR correction for Kruskal-Wallis p-values
+# Perform FDR correction for KW p-values
 summary_table <- summary_table %>% 
-  mutate(FDR_adj_p_value = p.adjust(KW_p_value, method = "fdr"))
+  mutate(FDR_adj_p_value = p.adjust(KW_p_value, method = "bonferroni"))
 
-# Sort the summary table by FDR-adjusted p-values
+# Sort summary table by FDR-adjusted
 summary_table <- summary_table %>% 
   arrange(FDR_adj_p_value)
 
-# Print the summary table
-print(summary_table)
-# STATS - Dunn test ----
-# Initialize an empty data frame to store the Dunn's test results
+head(summary_table)
+
+# Dunn test
+# Initialize
+dunn_results <- data.frame(
+  Marker = character(),
+  Bin = integer(),
+  Comparison = character(),
+  Z = numeric(),
+  P = numeric(),
+  Adj_P = numeric()
+)
+
 for (i in 1:nrow(summary_table)) {
-  if (!is.na(summary_table$KW_p_value[i]) && summary_table$KW_p_value[i] <= 0.05) {
+  
+  # Check conditions
+  if (!is.na(summary_table$FDR_adj_p_value[i]) && summary_table$FDR_adj_p_value[i] <= 0.05) {
     marker_bin <- summary_table[i, c("Marker", "Bin"), drop = FALSE]
     
     # Extract the marker and bin index
     marker <- marker_bin$Marker
     bin_index <- marker_bin$Bin
     
-    # Extract the data for the current bin
+    # Extract for the current bin
     bin_data <- combined_matrix[, bin_index]
     
     # Temp df for data and bin
     temp_data <- data.frame(Value = bin_data, Response = as.factor(group_vector))
     
-    # Perform Dunn's test
+    # Dunn's test
     dunn_result <- dunnTest(Value ~ Response, data = temp_data, method = "bh")
     
-    # Temp df to store results
+    # Temp df
     temp_df <- data.frame(
       Marker = rep(marker, nrow(dunn_result$res)),
       Bin = rep(bin_index, nrow(dunn_result$res)),
@@ -1373,11 +1385,9 @@ for (i in 1:nrow(summary_table)) {
     dunn_results <- rbind(dunn_results, temp_df)
     
   } else {
-    if (is.na(summary_table$KW_p_value[i])) {
-      print(paste("NA encountered in:", i))
-    } else if (summary_table$KW_p_value[i] >= 0.05) {
-      print(paste("P-value >= 0.05 encountered in:", i))
-    }
+    
+    # Skip
+    next
   }
 }
 
@@ -1385,7 +1395,185 @@ for (i in 1:nrow(summary_table)) {
 dunn_results <- dunn_results %>% 
   arrange(Adj_P)
 
-print(dunn_results)
+head(dunn_results)
+
+# STATS - Complete Spatial Randomness (CSR) #----
+SpaFx <- data.frame(
+  Image = character(0),
+  PD1_CSR = numeric(0),
+  CD8_CSR = numeric(0),
+  CD3_CSR = numeric(0),
+  TIM3_CSR = numeric(0),
+  LAG3_CSR = numeric(0),
+  CK_CSR = numeric(0)
+)
+
+for (i in seq_along(pointpatterns)) {
+  image_name <- names(pointpatterns[i])  # Take the first name if multiple are present
+  pointpattern <- pointpatterns[[i]]
+  csr_list <- list()
+  
+  for (marker in names(pointpattern)) {
+    ppp_obj <- pointpattern[[marker]]
+    if (ppp_obj$n > 0) {
+      csr_test <- quadrat.test(ppp_obj, alternative = "clustered", method = "M", conditional = T, nsim = 999)
+      csr_list[[marker]] <- csr_test$statistic
+    } else {
+      csr_list[[marker]] <- NA
+    }
+  }
+  
+  new_row <- data.frame(
+    Image = image_name,
+    PD1_CSR = csr_list$PD1,
+    CD8_CSR = csr_list$CD8,
+    CD3_CSR = csr_list$CD3,
+    TIM3_CSR = csr_list$TIM3,
+    LAG3_CSR = csr_list$LAG3,
+    CK_CSR = csr_list$CK
+  )
+  
+  SpaFx <- rbind(SpaFx, new_row)
+  row.names(SpaFx) <- NULL  # Reset row names to NULL
+}
+
+unique_eda_df <- eda_df[!duplicated(eda_df$Image), ]
+SpaFx$ID <- unique_eda_df$ID[match(SpaFx$Image, unique_eda_df$Image)]
+
+SpaFx$R <- as.character(NA)
+
+for (i in 1:nrow(SpaFx)) {
+  matched_id <- SpaFx$ID[i]
+  matching_rows <- which(responses$ID == matched_id)
+  
+  
+  if (length(matching_rows) >= 1) {
+    SpaFx$R[i] <- as.character(responses$Response[matching_rows[1]])
+  }
+}
+
+head(SpaFx)
+
+# KW test with FDR correction
+perform_kw_test <- function(df, markers, response_col = "R") {
+  kw_p_values <- list()
+  
+  for(marker in markers) {
+    df_for_kw <- df[!is.na(df[, marker]), c(marker, response_col)]
+    kw_test_result <- kruskal.test(as.formula(paste0(marker, "~ ", response_col)), data = df_for_kw)
+    kw_p_values[[marker]] <- kw_test_result$p.value
+  }
+  
+  kw_p_values <- unlist(kw_p_values)
+  adjusted_p_values <- p.adjust(kw_p_values, method = "fdr")
+  data.frame(Marker = names(adjusted_p_values), Adjusted_P_Value = as.numeric(adjusted_p_values))
+}
+
+# Dunn test with Bonferroni correction
+perform_dunn_test <- function(df, markers, response_col = "R") {
+  dunn_results <- list()
+  
+  for(marker in markers) {
+    df_for_dunn <- df[!is.na(df[, marker]), c(marker, response_col)]
+    dunn_test_result <- dunnTest(df_for_dunn[, 1], g = as.factor(df_for_dunn[, response_col]), method = "bonferroni")
+    dunn_results[[marker]] <- dunn_test_result
+  }
+  
+  dunn_adj_p_values_df <- do.call(rbind, lapply(names(dunn_results), function(marker) {
+    res_df <- dunn_results[[marker]]$res
+    data.frame(Marker = marker, Comparison = res_df$Comparison, Adjusted_P_Value = res_df$P.adj)
+  }))
+  
+  dunn_adj_p_values_df[order(dunn_adj_p_values_df$Adjusted_P_Value),]
+}
+
+markers <- colnames(SpaFx)[2:7]
+response_col <- "R"
+
+# KW test
+kw_test_results <- perform_kw_test(SpaFx, markers, response_col)
+print(sort(kw_test_results$Adjusted_P_Value))
+
+# Dunn test
+dunn_test_results <- perform_dunn_test(SpaFx, markers, response_col)
+print(dunn_test_results)
+
+# VISUALS - CSR heatmap ----
+long_SpaFx <- SpaFx %>%
+  gather(key = "Marker", value = "CSR", PD1_CSR:CK_CSR) %>%
+  filter(!is.na(CSR))  # Remove NAs
+
+long_SpaFx$Ordered_R <- factor(long_SpaFx$R, levels = c("CR", "PR", "SD", "PD"), ordered = TRUE)  # New Line
+
+# Sort the df by ordered treatment response and by Image
+long_SpaFx <- long_SpaFx %>%
+  arrange(Ordered_R, Image)  # Modified Line
+
+long_SpaFx$Ordered_Image <- factor(long_SpaFx$Image, levels = unique(long_SpaFx$Image), ordered = TRUE)
+
+# Compute min and max CSR
+agg_data <- long_SpaFx %>%
+  group_by(Marker) %>%
+  summarise(min_CSR = min(CSR, na.rm = TRUE),
+            max_CSR = max(CSR, na.rm = TRUE))
+
+# Merge with long_SpaFx
+long_SpaFx <- left_join(long_SpaFx, agg_data, by = "Marker")
+
+# Normalize CSR between 0 and 1
+long_SpaFx <- long_SpaFx %>%
+  mutate(Norm_CSR = (CSR - min_CSR) / (max_CSR - min_CSR))
+
+# Compute global mean of the CSR
+global_median <- mean(long_SpaFx$Norm_CSR, na.rm = TRUE)
+
+# Generate labels for y-axis
+unique_images <- unique(long_SpaFx$Ordered_Image)
+response_groups <- unique(long_SpaFx$Ordered_R)
+response_labels <- rep("", length(unique_images))
+
+for (r in response_groups) {
+  indices <- which(long_SpaFx[!duplicated(long_SpaFx$Ordered_Image), "Ordered_R"] == r)
+  response_labels[indices] <- r
+}
+
+# Wide-format df for heatmap
+heatmap_data <- long_SpaFx %>% 
+  select(Ordered_Image, Marker, Norm_CSR) %>% 
+  spread(key = Marker, value = Norm_CSR)
+
+rows <- response_labels
+cols <- str_replace(colnames(heatmap_data)[-1], "_CSR", "")
+
+mat <- as.matrix(heatmap_data[, -1])
+
+row_annot <- data.frame(Response = factor(rows, levels = c("CR", "PR", "SD", "PD")))
+
+rownames(row_annot) <- rownames(mat)
+
+# Remove _csr suffix
+colnames(mat) <- gsub("_CSR", "", colnames(mat))
+
+# Plot
+heatmaply(mat,
+          row_side_colors = row_annot,
+          row_side_palette = c("CR" = "forestgreen", "PR" = "green3", "SD" = "salmon", "PD" = "firebrick1"),
+          colors = YlOrRd,  # Divergent color scale
+          main = "",
+          scale = "column",
+          titleX = FALSE,
+          titleY = FALSE,
+          subplot_widths = c(0.95, 0.05),  
+          margins = c(20, 20, 20, 100),  # Increased margins
+          hide_colorbar = TRUE,
+          labRow = NULL,  # This will eliminate all y-ticks text
+          labCol = colnames(mat),  # This reinstates the immune markers
+          column_text_angle = 0,  # This should set the x-axis tick labels angle to 0
+          showticklabels = c(TRUE, FALSE),
+          grid_color = NA,  # Eliminate grid
+          dendrogram = "none",
+          width = 800,  # Set width
+          height = 800)  # Set height
 
 # STATS - Optimal number of bins ----
 # User-provided data and information
@@ -1698,9 +1886,9 @@ plot_sample <- function(spiat_scattercount, image_name, marker, bins) {
   print(gg)
 }
 
-plot_sample(spiat_scattercount, SPIAT_tifs[1], "LAG3", 10)
+plot_sample(spiat_scattercount, SPIAT_tifs[1], "LAG3", 21)
 
-## Custom plot symbol con ggplot ----
+## Intensity bubble plot ----
 plot_sample <- function(spiat_scattercount, image_name, marker, r) {
   
   image_data <- as.data.frame(spiat_scattercount[[image_name]])
@@ -1741,31 +1929,61 @@ plot_sample <- function(spiat_scattercount, image_name, marker, r) {
   point_colors <- color_range[bin_counts$Count]
   point_sizes <- sqrt(bin_counts$Count)  # Adjust as needed
   
-  points(bin_counts$X, bin_counts$Y, col = point_colors, cex = point_sizes, pch = 19, alpha = 0.9)
+  points(bin_counts$X, bin_counts$Y, col = point_colors, cex = point_sizes, pch = 20)
   
   return(NULL)
 }
 
 gg_custom_scatter <- plot_sample(spiat_scattercount, SPIAT_tifs[1], "LAG3", 0.2)
 
-## Tesselation plots ---- 
-# Create a subset of the data
-subset_data <- spiat_scattercount[[SPIAT_tifs[[1]]]]
+# DATA - SpiatScatterplot Hyperframe ----
+# Initialize with first image
+first_img_data <- spiat_scattercount[[1]]
+first_img_data_df <- as.data.frame(first_img_data)
 
-# Create ppp object
-Z <- ppp(subset_data$X, subset_data$Y, window = w, marks = subset_data$LAG3)
+first_ppp_list <- list()
 
-# Extract the marks ("LAG3" values)
-marks_values <- marks(Z)
+# Loop through each unique phenotype
+for (phenotype in unique(first_img_data[["P"]])) {
+  subset_data <- subset(first_img_data_df, P == phenotype)
+  
+  if(nrow(subset_data) > 0) {
+    ppp <- ppp(x = subset_data$X, y = subset_data$Y,
+               marks = data.frame(PD1 = subset_data$PD1, CD8 = subset_data$CD8,
+                                  CD3 = subset_data$CD3, LAG3 = subset_data$LAG3,
+                                  TIM3 = subset_data$TIM3, CK = subset_data$CK), 
+               window = w, checkdup = FALSE)
+    first_ppp_list[[phenotype]] <- ppp
+  }
+}
 
-# Calculate quartiles on the marks
-b <- quantile(marks_values, probs = (0:4)/4)
+hf <- hyperframe(I = unique(first_img_data$Image), ppp = list(first_ppp_list), ID = unique(first_img_data$ID), Response = unique(first_img_data$Response))
 
-# Cut the data based on quartiles
-Zcut <- cut(Z, breaks = b, labels = 1:4)
+# Loop through remaining images
+for (i in 2:length(spiat_scattercount)) {
+  
+  img_data <- spiat_scattercount[[i]]
+  img_data_df <- as.data.frame(img_data)
+  
+  ppp_list <- list()
+  
+  # Loop through each unique phenotype
+  for (phenotype in unique(img_data[["P"]])) {
+    subset_data <- subset(img_data_df, P == phenotype)
+    
+    if(nrow(subset_data) > 0) {
+      ppp <- ppp(x = subset_data$X, y = subset_data$Y,
+                 marks = data.frame(PD1 = subset_data$PD1, CD8 = subset_data$CD8,
+                                    CD3 = subset_data$CD3, LAG3 = subset_data$LAG3,
+                                    TIM3 = subset_data$TIM3, CK = subset_data$CK), 
+                 window = w, checkdup = FALSE)
+      ppp_list[[phenotype]] <- ppp
+    }
+  }
+  
+  # Append to hyperframe
+  new_row <- hyperframe(I = unique(img_data$Image), ppp = list(ppp_list), ID = unique(img_data$ID), Response = unique(img_data$Response))
+  hf <- rbind.hyperframe(hf, new_row)
+}
 
-# Create tessellation
-V <- tess(image = Zcut, window = w)
-
-# Plot tessellation
-plot(V)
+plot(hf$ppp[[sample(1:90, 1)]]$CK, clipwin = w, use.marks = F, pch = 20) # Plots the ppp object of the 2oth image from the hyperframe.
