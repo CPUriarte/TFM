@@ -16,6 +16,7 @@ library(FSA)
 library(ggsignif)
 library(corrplot)
 library(spatstat)
+library(igraph)
 ############################################ LOADING DATA ----
 # 1. DATA READING AND FORMATTING
 ## 1.1. READING IN DATA ----
@@ -569,7 +570,6 @@ selected_image <- SPIAT_tifs[65]
 final_df_joined <- final_df %>%
   left_join(responses, by = "ID")
 
-# Plot
 p <- final_df_joined %>%
   filter(Image == selected_image) %>%
   ggplot(aes(x = X, y = Y, color = Phenotype)) +
