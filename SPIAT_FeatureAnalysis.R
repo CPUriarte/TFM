@@ -1,4 +1,4 @@
-# LIBRARIES ----
+# Libraries ----
 library(gridExtra)
 library(BBmisc)
 library(stats)
@@ -25,13 +25,16 @@ library(parallelly)
 library(pheatmap)
 library(igraph)
 library(heatmaply)
+library(dplyr)
 
-############################################ DATA READING AND FORMATTING ---------------------------------------------
-## 1.1. READING IN DATA ----
+############################################ Loading and pre-processing ---------------------------------------------
+# Loading ----
+# Raw measurements exported from QuPath
 raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
 
+# Clinical data
 responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
-## 1.2. FORMATTING FOR EDA ----
+# Formatting ----
 # Treatment response dataset
 responses <- responses[, -c(4, 6:8)] # Eliminate unnecessary columns
 colnames(responses) <- c("ID", "Age", "Sex", "Response") # Set name to columns
@@ -56,18 +59,16 @@ eda_df$ID <- as.numeric(eda_df$ID) # Extract patient ID pt 2/2
 response_vector <- responses$Response[match(eda_df$ID, responses$ID)] # Match response to patient ID
 eda_df$Response <- response_vector
 
-# Delete groups that are not evaluable
+# Drop NE group
 responses$ID <- as.numeric(responses$ID)
 eda_df <- eda_df[eda_df$Response != "Not evaluable/NE", ]
 responses <- responses[responses$Response != "Not evaluable/NE", ]
 
-# Finish formatting
 eda_df <- eda_df[, -ncol(eda_df)]
 new_order <- c("Image", "X", "Y", "ID", "DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 eda_df <- eda_df[, new_order]
 
-
-# Counting the number of cells per TIFF and binding it to the response dataset
+# Counts cells per TIFF and binds it to responses df
 cell_counts <- table(eda_df$ID)
 cell_counts<- as.data.frame(cell_counts)
 colnames(cell_counts) <- c("ID", "Cell_Count")
@@ -75,9 +76,9 @@ cell_count_vector <- cell_counts$Cell_Count[match(responses$ID, cell_counts$ID)]
 responses$total_cells <- cell_count_vector
 
 # Final retouches
-# Create a convenient list with all images
-SPIAT_tifs <- unique(eda_df$Image)
-SPIAT_px <- unique(eda_df$ID)
+# Create convenient lists
+SPIAT_tifs <- unique(eda_df$Image) # Contains all curated images
+SPIAT_px <- unique(eda_df$ID) # Contains all patient IDs
 
 responses <- responses %>%
   left_join(
@@ -98,12 +99,12 @@ responses$Response <- droplevels(responses$Response, "Not evaluable/NE")
 levels(responses$Response) <- c("CR", "PR", "PD", "SD")
 
 # Cleaning memory
-rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector"))
+suppressWarnings(rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector")))
 
-############################################ SPIAT GLIMPSE (SPATIAL IMAGE ANALYSIS OF TISSUES) ----
-## 4.1 CREATE SPATIAL EXPERIMENT ----
+############################################ SPIAT ----
+# 1. Create a spatial object ----
 # Select image subset
-selected_image <- SPIAT_tifs[1]
+selected_image <- SPIAT_tifs[65]
 selected_data <- subset(raw_measurements, Image %in% selected_image)
 selected_data <- selected_data %>% # Remove "Image" name column
   select(-1)
@@ -118,7 +119,6 @@ intensity_matrix <- as.data.frame(intensity_matrix)
 colnames(intensity_matrix) <- str_c("Cell", as.character(1: ncol(intensity_matrix)), sep = "_")
 rownames(intensity_matrix) <- c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
-#my_phenotype = final_df$Phenotype[final_df$Image == selected_image] 
 phenotype = phenotype = rep(NA, ncol(intensity_matrix))
 
 # Create spatial experiment (S4 object)
@@ -151,7 +151,7 @@ predicted_image <- predict_phenotypes(
   reference_phenotypes = FALSE,
   plot_distribution = TRUE)
 
-## 4.2. QUALITY CONTROL AND VISUALISATION ----
+# 1. Quality control and visualization ----
 # Boxplot of marker intensities
 marker_names <- predicted_image@rowRanges@partitioning@NAMES
 marker_names <- marker_names[marker_names != "DAPI"]
@@ -248,19 +248,21 @@ combined_plot <- plotly::subplot(g_plotly, cleaned_g_plotly, nrows = 1) %>%
 combined_plot
 
 # Categorical dot plot
-plot_cell_categories(
+p <- plot_cell_categories(
   predicted_image, 
-  c("Undefined", "Tumour", "PanExhaust", "T-cell", "Active T-cell", "ExhaustedTIM3", "ExhaustedPD1", "ExhaustedLAG3"),
-  c("grey", "yellow","cyan","red", "darkred","purple", "purple", "purple"), 
-  "Cell.Type",
+  c("None", "CK", "CD3,CK", "CD3,TIM3,LAG3,CK", "TIM3,CK", "PD1,CD3,TIM3,CK", "PD1,CD3,CK", "LAG3,CK", "CD3,LAG3,CK", "CD3,TIM3","CD3","CD8,CK", "PD1,CD8,CD3,TIM3", "CD8,CD3,TIM3", "PD1,CD3,TIM3", "CD3,TIM3,CK", 
+    "TIM3", "PD1,CD3", "CD8", "CD8,CD3", "PD1,CK", "CD8,TIM3,CK", "CD8,CD3,TIM3,CK"),
+  color_vector <- c("grey", "yellow", "cyan", "red", "darkred", "purple", "darkgreen", "blue", "orange", "brown", "pink", "magenta", "limegreen", "gold", "tan", "steelblue", "darkgrey", "darkblue", "darkorange", "darkmagenta", "green4", "skyblue", "darkcyan"), 
+  "Phenotype",
   layered = TRUE)
+ggplotly(p) 
 
 # 3D surface plot
 # Warning: Uses rownames(SummarizedExperiment::assay(spe_object)) to compare markers so only works with original markers and not phenotypes
 marker_names <- c("PD1",  "LAG3", "CK")
 marker_surface_plot_stack(predicted_image, num_splits=50, marker_names)
 
-## 4.3. BASIC ANALYSES WITH SPIAT ----
+# 2. Basic analyses ----
 # Cell percentages
 p_cells <- calculate_cell_proportions(predicted_image, 
                                       reference_celltypes = NULL, 
@@ -303,7 +305,7 @@ min_summary_dist
 
 plot_distance_heatmap(phenotype_distances_result = min_summary_dist, metric = "mean")
 
-## 4.4. QUANTIFYING CELL COLOCALISATION WITH SPIAT ----
+# 3. Quantifying cell co-localisation ----
 # Cells in Neighbourhood (CIN)
 average_percentage_of_cells_within_radius(spe_object = cleaned_image, 
                                           reference_celltype = "Tumour", 
@@ -355,7 +357,7 @@ for (marker in marker_names) {
 AUC_of_cross_function(df_cross) # Mixed
 crossing_of_crossK(df_cross) # Ring
 
-## 4.5. SPATIAL HETEROGENEITY ----
+# 4. Spatial heterogeneity ----
 # Localised enthropy
 calculate_entropy(formatted_image, 
                   cell_types_of_interest = c("PanExhaust","ExhaustedLAG3"), 
@@ -395,7 +397,7 @@ gradient_results <- entropy_gradient_aggregated(formatted_image,
 plot(1:10,gradient_results$gradient_df[1, 3:12])
 
 
-## 4.6. CHARACTERISING TISSUE STRUCTURE ----
+# 5. Characterising tissue structures ----
 # Determining whether there is a clear tumour margin
 R_BC(formatted_image, cell_type_of_interest = "Tumour", "Cell.Type")
 
@@ -432,7 +434,7 @@ immune_distances <- calculate_summary_distances_of_cells_to_borders(
 
 immune_distances
 
-## 4.7. CELLULAR NEIGHBORHOOD ----
+# 6. Cellular neighborhood (CIN) ----
 # Cellular neighborhood
 average_minimum_distance(formatted_image)
 
@@ -463,9 +465,8 @@ average_nearest_neighbor_index(
   feature_colname="Cell.Type", 
   p_val = 0.05)
 
-########################################### FEATURE 1 - PHENOTYPES -----
-# EXTRACT - Predicted phenotypes ----
-# PROCESS - Extraction and re-arrangement ----
+########################################### F1 - Predicted phenotypes -----
+# EXTRACT - Extraction and formatting ----
 spiat_predicted_phenotypes <- list()
 
 # Custom extraction function
@@ -476,7 +477,7 @@ extract_data_from_spatial_experiment <- function(spe_object) {
   return(list(spatial_coords = spatial_coords, phenotype = phenotype))
 }
 
-# Predict all phenotypes for all images
+# Extract all predictions using pblapply
 spiat_predicted_phenotypes <- pblapply(SPIAT_tifs, function(selected_image) {
   
   # Filter data based on the current image
@@ -524,23 +525,23 @@ spiat_predicted_phenotypes <- pblapply(SPIAT_tifs, function(selected_image) {
   return(list(image_name = selected_image, spatial_coords = extracted_data$spatial_coords, phenotype = extracted_data$phenotype))
 })
 
-# Name each list entry with its corresponding image name
+# Name each entry with their image name
 names(spiat_predicted_phenotypes) <- sapply(spiat_predicted_phenotypes, function(x) x$image_name)
 
-## OBTAIN PREDICTED PHENOTYPE COUNTS
-# Step 1: Extract phenotypes and store them in a vector
+## Obtain predicted phenotype counts
+# Step 1: Extract phenotypes
 phenotype_vector <- unlist(lapply(spiat_predicted_phenotypes, function(x) x$phenotype))
 
-# Step 2: Get unique phenotypes across all images
+# Step 2: Get unique phenotypes of all images
 unique_phenotypes <- unique(phenotype_vector)
 
-# Step 3: Create a dataframe with image names and columns named based on unique phenotypes
+# Step 3: Create df with image names and columns named based on unique phenos
 spiat_pheno_counts <- data.frame(image_name = names(spiat_predicted_phenotypes),
                                  matrix(NA, ncol = length(unique_phenotypes), nrow = length(spiat_predicted_phenotypes)))
 
 colnames(spiat_pheno_counts) <- c("Image", unique_phenotypes)
 
-# Step 4 (Continuation): Iterate through images, count phenotypes, and update the dataframe
+# Step 4: Iterate through images, count phenotypes, and updat df
 for (i in seq_along(spiat_predicted_phenotypes)) {
   image <- spiat_predicted_phenotypes[[i]]
   image_name <- names(spiat_predicted_phenotypes[i])
@@ -561,13 +562,13 @@ for (i in seq_along(spiat_predicted_phenotypes)) {
   }
 }
 
-# Step 5: Re-ordering columns
-# Add the ID and response columns
+## Re-ordering columns
+# Add ID and response columns
 spiat_pheno_counts$ID <- eda_df$ID[match(spiat_pheno_counts$Image, eda_df$Image)]
 spiat_pheno_counts$Response <- responses$Response[match(spiat_pheno_counts$ID, responses$ID)]
 current_cols <- setdiff(colnames(spiat_pheno_counts), c("Image","ID", "Response", "None", "CK"))
 
-# Assign primary weights based on prefixes
+# Assign primary weights (prefixes)
 get_primary_weight <- function(col) {
   if (startsWith(col, "CD3")) return(1)
   if (startsWith(col, "CD8")) return(2)
@@ -579,8 +580,9 @@ get_primary_weight <- function(col) {
   return(100)
 }
 
-# Assign secondary weight based on the number of immune markers
+# Assign secondary weight (number of immune markers)
 get_secondary_weight <- function(col) {
+  
   # Count number of commas and add 1 to determine the number of markers
   return(1 + sum(nchar(gsub("[^,]", "", col))))
 }
@@ -595,24 +597,24 @@ combined_weights <- primary_weights * 1000 + secondary_weights
 # Sort columns based on combined weights
 ordered_cols <- current_cols[order(combined_weights)]
 
-# Add the "Image", "None", and "CK" columns at the start
+# Add "Image", "None", and "CK" columns at the start
 final_order <- c("Image","ID", "Response", "None", "CK", ordered_cols)
 
-# Re-arrange columns based on final_order
+# Re-arrange columns (final order)
 spiat_pheno_counts <- spiat_pheno_counts[, final_order]
 
 # PROCESS - Convert to proportions ----
-# Step 1: Reshape the data
+# Reshape data
 spiat_long_format <- spiat_pheno_counts %>%
   select(-Image) %>%
   gather(key = 'spiat_Phenotype', value = 'spiat_Count', -ID, -Response)
 
-# Group the data by ID and summarize the counts
+# Group data by ID and summarize counts
 spiat_total_cells_per_ID <- spiat_long_format %>%
   group_by(ID) %>%
   summarise(spiat_TotalCells = sum(spiat_Count, na.rm = TRUE))
 
-# Long Data with Proportions
+# Mutate to long format
 spiat_long_with_props <- spiat_long_format %>%
   group_by(ID, spiat_Phenotype) %>%
   summarise(spiat_PhenotypeCount = sum(spiat_Count, na.rm = TRUE)) %>%
@@ -643,7 +645,7 @@ spiat_aggregated_pheno <- spiat_long_with_props %>%
 spiat_aggregated_pheno <- spiat_aggregated_pheno %>%
   mutate(spiat_GroupProp = spiat_PhenotypeSum / spiat_TotalSum)
 
-# So that abscent markers are not ignored but counted as 0
+# Absent markers counted as 0 instead of ignored
 spiat_pheno_counts[,4:67] <- apply(spiat_pheno_counts[,4:67], 2, function(x) ifelse(is.na(x), 0, x))
 
 # Aggregation by summation (since phenotypes are counts, we test proportions instead of counts to lessen the effects of repeated paired measures)
@@ -664,7 +666,7 @@ spiat_phenoKW <- spiat_pheno_temp %>%
 
 phenos <- unique(spiat_phenoKW$Phenotype)
 
-# Initialize data frames
+# Storage
 spiat_pheno_levene <- data.frame(
   Phenotype = character(0), 
   levene = numeric(0)
@@ -683,24 +685,21 @@ spiat_pheno_dunn <- data.frame(
   P.adj = numeric(0)
 )
 
-# Step 1: Perform Levene's test
+# Levene's test
 for (pheno in phenos) {
   lev_test <- leveneTest(Value ~ Response, data = spiat_phenoKW[spiat_phenoKW$Phenotype == pheno, ])$`Pr(>F)`[1]
   spiat_pheno_levene <- rbind(spiat_pheno_levene, data.frame(Phenotype = pheno, levene = lev_test))
 }
 
-# Step 2: Perform Kruskal-Wallis test for Levene's test (p >= 0.05)
+# KW test
 for (pheno in phenos) {
   p_val <- kruskal.test(Value ~ Response, data = spiat_phenoKW[spiat_phenoKW$Phenotype == pheno, ])$p.value
   spiat_phenoKWfdr <- rbind(spiat_phenoKWfdr, data.frame(Phenotype = pheno, p.value = p_val))
 }
 
-# Adjust p-values
-spiat_phenoKWfdr$adj.p <- p.adjust(spiat_phenoKWfdr$p.value, method = "fdr")
-
-# Step 3: Perform Dunn's test for Kruskal-Wallis p < 0.05
+# Dunn's test for KW p < 0.05
 for (pheno in spiat_phenoKWfdr$Phenotype[spiat_phenoKWfdr$p.value < 0.05]) {
-  dunn_results <- dunnTest(Value ~ Response, data = spiat_phenoKW[spiat_phenoKW$Phenotype == pheno, ], method = "bonferroni")
+  dunn_results <- dunnTest(Value ~ Response, data = spiat_phenoKW[spiat_phenoKW$Phenotype == pheno, ], method = "bh")
   dunn_df <- data.frame(
     Phenotype = rep(pheno, nrow(dunn_results$res)),
     Comparison = dunn_results$res$Comparison,
@@ -711,38 +710,19 @@ for (pheno in spiat_phenoKWfdr$Phenotype[spiat_phenoKWfdr$p.value < 0.05]) {
   spiat_pheno_dunn <- rbind(spiat_pheno_dunn, dunn_df)
 }
 
-# Cleaning up
-rm(col_index, current_cols, i, image, image_name, image_phenotype_counts, ordered_cols, phenotype, phenotype_vector, phenotypes_in_image, row_index, 
-   unique_phenotypes, primary_weights, secondary_weights, combined_weights, get_primary_weight, get_secondary_weight, final_order, spiat_pheno_temp, 
-   marker, markers, p_val, dunn_df, dunn_results, lev_test, spiat_long_format, spiat_phenoKW, spiat_total_cells_per_ID)
-
-# RESULTS - Statistics ----
-print(
-  spiat_phenoKWfdr %>% 
-    filter(p.value < 0.05) %>% 
-    arrange(p.value)
-)
-
-print(
-  spiat_pheno_dunn %>% 
-    filter(P.adj < 0.05) %>% 
-    arrange(P.adj)
-)
-
-# VISUALS - Horizontal stacked barplots (PATIENTS) ----
-# Merge the datasets
+# VISUALS - Relative phenotype proportion per patient (Barplot) ----
+# Merge datasets
 merged_data <- merge(spiat_long_with_props, responses[, c("ID", "Response")], by = "ID")
 
-# Order IDs based on Response categories
+# Order IDs based on response
 ordered_ids <- merged_data %>% 
   arrange(factor(Response, levels = c("CR", "PR", "SD", "PD"))) %>%
   pull(ID) %>%
   unique()
 
-# Relevel factor levels of ID
+# Re-level factor levels of ID
 merged_data$ID <- factor(merged_data$ID, levels = ordered_ids)
 
-# Plot
 gg <- ggplot(merged_data, aes(x=factor(ID), y=spiat_Prop, fill=spiat_Phenotype)) +
   geom_bar(stat="identity", position="fill") + 
   theme_minimal() +
@@ -751,7 +731,7 @@ gg <- ggplot(merged_data, aes(x=factor(ID), y=spiat_Prop, fill=spiat_Phenotype))
 
 gg
 
-# VISUALS - Horizontal stacked barplots (RESPONSES) ----
+# VISUALS - Relative phenotype proportion per response group (Barplot) ----
 spiat_plot <- ggplot(spiat_aggregated_pheno, aes(x = spiat_Response, y = spiat_GroupProp, fill = spiat_Phenotype)) +
   geom_bar(stat = "identity") +
   coord_flip() +
@@ -764,9 +744,33 @@ spiat_plot <- ggplot(spiat_aggregated_pheno, aes(x = spiat_Response, y = spiat_G
 
 plot(spiat_plot)
 
-########################################### FEATURE 2 - SCATTERPLOT (S/T) -----
-# EXTRACT - Scatterplot data ----
-# Iterate over all images
+# Cleaning space from memory
+suppressWarnings(
+  rm(col_index, current_cols, i, image, image_name, image_phenotype_counts, ordered_cols, phenotype, phenotype_vector, phenotypes_in_image, row_index, 
+     unique_phenotypes, primary_weights, secondary_weights, combined_weights, get_primary_weight, get_secondary_weight, final_order, spiat_pheno_temp, 
+     marker, markers, p_val, dunn_df, dunn_results, lev_test, spiat_long_format, spiat_phenoKW, spiat_total_cells_per_ID, pheno, spiat_aggregated_pheno,
+     spiat_pheno_levene, spiat_plot, gg, ordered_ids, phenos, spiat_long_with_props)
+)
+
+# Clean everything in the console
+cat("\014")
+
+print("Intermediary variables have been supressed to maintain clarity, please refer to each section of the code in order to retrieve a specific variable")
+
+# STATS - KW comparison & post-hoc ----
+print(
+  spiat_phenoKWfdr %>% 
+    filter(p.value <= 0.05) %>% 
+    arrange(p.value)
+)
+
+print(
+  spiat_pheno_dunn %>% 
+    filter(P.adj <= 0.05) %>% 
+    arrange(P.adj)
+)
+########################################### F2 - Scatterplots -----
+# EXTRACT - Extract scatterplots ----
 spiat_scattercount <- list()
 
 # Extraction function
@@ -791,7 +795,7 @@ extract_data_from_spatial_experiment <- function(plots_list) {
 # Loop through each image
 spiat_scattercount <- pblapply(SPIAT_tifs, function(selected_image) {
   
-  # Filter data based on the current image
+  # Filter data
   selected_data <- subset(raw_measurements, Image %in% selected_image)
   selected_data <- selected_data %>% 
     select(-1) # Remove "Image" name column
@@ -850,27 +854,28 @@ spiat_scattercount <- pblapply(SPIAT_tifs, function(selected_image) {
   
 })
 
-# Name list entries
+# Name entries
 names(spiat_scattercount) <- sapply(spiat_scattercount, function(x) x$Image)
 
-## Matching response and ID
-# Update each element in spiat_scattercount
+# Cat matching response and ID
 spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
   
-  # Find the matching ID from eda_df based on Image
+  # Find matching ID based on image name
   matching_ID <- unique(eda_df$ID[eda_df$Image == x$Image])
   
   if (length(matching_ID) == 1) {
     x$ID <- matching_ID
     
-    # Find the matching Response from responses based on ID
+    # Find matching response based on ID
     matching_Response <- responses$Response[responses$ID == matching_ID]
     
     if (length(matching_Response) == 1) {
       x$Response <- matching_Response
+      
     } else {
       warning(paste("No matching Response found for ID:", matching_ID))
     }
+    
   } else {
     warning(paste("No matching ID found for Image:", x$Image))
   }
@@ -879,25 +884,23 @@ spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
 })
 
 nq <- 15 # Select n of quadrats (<90) ----
-# PROCESSING - Creates PPP, density maps and quadrats (ALL IMAGES) ---- 
+# PROCESS - Creates PPP, density maps and quadrats ---- 
+# Generate standardized window of observation
 allX_list <- lapply(spiat_scattercount, function(x) x$X)
 allY_list <- lapply(spiat_scattercount, function(x) x$Y)
-
 center_x <- median(unlist(allX_list))
 center_y <- median(unlist(allY_list))
-
-# Calculate distances from center to each point
 distances <- sqrt((unlist(allX_list) - center_x)^2 + (unlist(allY_list) - center_y)^2)
 radius <- max(distances)
-w <- disc(radius=radius, centre=c(center_x, center_y))
+w <- disc(radius=radius, centre=c(center_x, center_y)) # Window w
 
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
-# Create lists for the results
-pointpatterns <- vector("list", length = length(names(spiat_scattercount)))
-density_maps <- vector("list", length = length(names(spiat_scattercount)))
-qtest_results <- vector("list", length = length(names(spiat_scattercount)))
-quadrats <- vector("list", length = length(names(spiat_scattercount)))
+# Storage lists
+pointpatterns <- vector("list", length = length(names(spiat_scattercount))) # PPP objects
+density_maps <- vector("list", length = length(names(spiat_scattercount))) # Density maps
+qtest_results <- vector("list", length = length(names(spiat_scattercount))) # MC simulations
+quadrats <- vector("list", length = length(names(spiat_scattercount))) # Quadratcount
 
 skipped_images <- data.frame(ImageName = character(),
                              ID = character(),
@@ -941,13 +944,13 @@ for (image_name in names(spiat_scattercount)) {
                       nx = nq, 
                       keepempty = T)
     
-    # Estimate the density
+    # Estimate density
     D <- density.ppp(P,
                      sigma = 85,
                      edge = TRUE,
                      diggle = TRUE)
     
-    # Check if marker is present and if the number of counts is above the threshold
+    # Debug
     if (nrow(subset_data) >= nq) {
       
       # Calculate quadrat test
@@ -960,12 +963,13 @@ for (image_name in names(spiat_scattercount)) {
       
     } else {
       
-      # Check if ID and Response are available for the image_name
+      # Check if ID and Response are available for image_name
       id_available <- unlist(responses$ID[sapply(responses$image_names, function(x) any(x == image_name))])
       response_available <- unlist(responses$Response[sapply(responses$image_names, function(x) any(x == image_name))])
       
       if (length(id_available) > 0 && length(response_available) > 0) {
-        # Store the image name, ID, marker, and response group in the skipped_images list
+        
+        # Store in the skipped_images list
         skipped_images <- rbind(skipped_images, data.frame(ImageName = image_name,
                                                            ID = id_available,
                                                            Marker = marker,
@@ -981,7 +985,7 @@ for (image_name in names(spiat_scattercount)) {
     
   }
   
-  # Store each image and results
+  # Store images and results
   pointpatterns[[image_name]] <- marker_ppps
   density_maps[[image_name]] <- marker_density_maps
   quadrats[[image_name]] <- q_count
@@ -993,65 +997,55 @@ for (image_name in names(spiat_scattercount)) {
 
 print(skipped_images)
 
-# PROCESSING - Aggregation by ID ----
-# (IMAGES) Transform each bin to relative proportions
+# PROCESS - Aggregation by ID ----
 transformed_quadrats <- list()
 
 # Image's bins to proportions relative to total patient count
 for (image_name in names(quadrats)) {
   
-  # Extract current image data
   image_data <- quadrats[[image_name]]
   
-  # Create empty list for storage
+  # Storage
   transformed_image_data <- list()
   
-  # Loop through each marker in the image data
   for (marker in names(image_data)) {
     
-    # Extract the counts for the current marker
+    # Extract counts for current marker
     marker_counts <- image_data[[marker]]
     
-    # Calculate the total count for the current marker in the current image
+    # Calculate total count for current marker
     greped_ID <- which(unlist(sapply(responses$image_names, function(x) image_name %in% x)))
     total_count <- responses$total_cells[greped_ID]
     
-    # Transform the counts into relative proportions
+    # Transform into relative proportions
     relative_proportions <- round((marker_counts / total_count)*100, 3)
     
-    # Store the transformed data in the list
+    # Store transformed data
     transformed_image_data[[marker]] <- relative_proportions
   }
   
-  # Store the transformed data for the current image in the main list
+  # Store transformed data for current
   transformed_quadrats[[image_name]] <- transformed_image_data
 }
 
-# (PATIENT ID) Aggregate values by average based on: marker, and bin index
+# Aggregate values by average based on: marker, and bin index
 grouped_quadrats <- list()
+
 for (patient_id in unique(responses$ID)) {
   
-  # Find the image names corresponding to the current patient ID
+  # Find image names corresponding to current ID
   image_names <- unlist(responses$image_names[responses$ID == patient_id])
   
-  # Initialize an empty list to store the grouped data for the current patient
   grouped_patient_data <- list()
   
-  # Loop through each image name for the current patient
   for (image_name in image_names) {
     
-    # Extract the data for the current image
+    # Extract data for current image
     image_data <- transformed_quadrats[[image_name]]
-    
-    # Loop through each marker in the image data
+
     for (marker in names(image_data)) {
       
-      # If the marker list doesn't exist, initialize it
-      if (is.null(grouped_patient_data[[marker]])) {
-        grouped_patient_data[[marker]] <- list()
-      }
-      
-      # Append the counts for the current marker and image to the list
+      # Append counts for current marker and image
       grouped_patient_data[[marker]] <- append(grouped_patient_data[[marker]], list(image_data[[marker]]))
     }
   }
@@ -1065,117 +1059,110 @@ for (patient_id in unique(responses$ID)) {
     # Replace NaN with 0
     marker_matrix[is.nan(marker_matrix)] <- 0
     
-    # Calculate the mean for each bin (column)
+    # Calculate mean for each bin (column)
     mean_values <- apply(marker_matrix, 2, mean, na.rm = TRUE)
     
     # Create a new quadratcount object with the mean values but retaining the owin object and tess attributes
     new_quadrat <- grouped_patient_data[[marker]][[1]]
     attributes(new_quadrat)$quadratcount <- mean_values
     
-    # Store the new quadrat object in the list
+    # Store
     grouped_patient_data[[marker]] <- new_quadrat
   }
   
-  # Store the grouped and aggregated data for the current patient in the main list
+  # Store grouped and aggregated data for the current patient
   grouped_quadrats[[as.character(patient_id)]] <- grouped_patient_data
 }
 
-# PROCESSING - Aggregation by response group ----
+# PROCESS - Aggregation by response group ----
 grouped_by_response <- list()
 
 for (response_group in unique(responses$Response)) {
   
-  # Initialize an empty list to store the grouped data for the current response group
   grouped_response_data <- list()
   
-  # Find the patient IDs corresponding to the current response group
+  # Find IDs corresponding to current response group
   patient_ids <- unique(responses$ID[responses$Response == response_group])
   
-  # Loop through each patient ID for the current response group
   for (patient_id in patient_ids) {
     
-    # Extract the data for the current patient
+    # Extract data for the current patient
     patient_data <- grouped_quadrats[[as.character(patient_id)]]
     
-    # Loop through each marker in the patient data
     for (marker in names(patient_data)) {
       
-      # Append the counts for the current marker and patient to the list
+      # Append counts for current marker and patient
       grouped_response_data[[marker]] <- append(grouped_response_data[[marker]], list(patient_data[[marker]]))
     }
   }
   
-  # Now, aggregate each marker by the mean
+  # Now, aggregate each marker by mean
   for (marker in names(grouped_response_data)) {
     
-    # Combine all the counts for this marker into a matrix
+    # Combine all the counts for this marker
     marker_matrix <- do.call(rbind, lapply(grouped_response_data[[marker]], function(x) attributes(x)$quadratcount))
     
-    # Calculate the mean for each quadrant
+    # Calculate mean for each quadrant
     mean_val <- apply(marker_matrix, 2, mean, na.rm = TRUE)
     
     # Create a new quadratcount object with the mean values but retaining the owin object and tess attributes
     new_quadrat <- grouped_response_data[[marker]][[1]]
     attributes(new_quadrat)$quadratcount <- mean_val
     
-    # Store the new quadrat object in the list
+    # Store the new quadrat object
     grouped_response_data[[marker]] <- new_quadrat
   }
   
-  # Store the grouped and aggregated data for the current response group in the main list
+  # Store the grouped and aggregated data for the current response group
   grouped_by_response[[response_group]] <- grouped_response_data
 }
 
 selected_image <- SPIAT_tifs[1] #----
-# VISUALS - Sampler density maps ----
-# Define the order of response groups and immune markers
+# VISUALS - Density sampler of each response group (Density map) ----
+# Order of response groups and immune markers
 response_order <- c("SD", "PD", "CR", "PR")
 marker_order <- c("CD8", "PD1", "CK", "TIM3", "CD3", "LAG3")
 
-# Initialize an empty list to store the point patterns, densities, and contours
 group_ppp <- list()
 group_densities <- list()
 
-# Loop through each unique response group
 for (response_group in response_order) {
   
-  # Filter the responses data frame to only include patients in the current response group
+  # Filter responses data frame to only include patients in the current response group
   group_images <- unlist(responses$image_names[responses$Response == response_group])
   
-  # Sample an image from the current response group (if available)
+  # Sample an image
   sampled_images <- sample(group_images, size = min(1, length(group_images)), replace = FALSE)
-  
-  # Loop through each sampled image name
+
   for (image_name in sampled_images) {
     
-    # Extract the data for the current image
+    # Extract data
     gppp <- pointpatterns[[image_name]]
     dmap <- density_maps[[image_name]]
     
-    # Store the point patterns, densities, and contours in the list, indexed by response group and image name
+    # Store
     index_name <- paste(response_group, image_name, sep = "_")
     group_ppp[[index_name]] <- gppp
     group_densities[[index_name]] <- dmap
   }
 }
 
-# Initialize a list to store min and max density for each marker
+# Store min and max density
 marker_min_max = list()
 
-# Loop through each image to get the min and max density for each marker
 for (image_name in names(group_densities)) {
   
   for (marker in names(group_densities[[image_name]])) {
     
     current_density_values = group_densities[[image_name]][[marker]]$v
     
-    # Update the min and max if the current density values are more extreme
+    # Update min and max if current are more extreme
     marker_min_max[[marker]]$min = min(marker_min_max[[marker]]$min, min(current_density_values, na.rm = TRUE))
     marker_min_max[[marker]]$max = max(marker_min_max[[marker]]$max, max(current_density_values, na.rm = TRUE))
   }
 }
 
-# Your plotting code remains largely the same
+# Plot
 par(mfrow = c(6, length(group_ppp)), mar = c(1,1,1,1), bty = "n")
 
 for (marker in marker_order) {
@@ -1187,7 +1174,7 @@ for (marker in marker_order) {
         f_ppp <- group_ppp[[image_name]][[marker]]
         f_densities <- group_densities[[image_name]][[marker]]
         
-        # Use zlim parameter from marker_min_max
+        # Use zlim from marker_min_max
         zlim_values = c(0, marker_min_max[[marker]]$max)
         brks <- seq(0, marker_min_max[[marker]]$max, length.out = 6)
         
@@ -1202,7 +1189,6 @@ for (marker in marker_order) {
                 drawlabels = FALSE,
                 nlevels = 5)
         
-        # Add titles and labels
         if (image_name == names(group_ppp)[1]) {
           mtext(marker, side = 2, line = 0, cex = 1)
         }
@@ -1211,105 +1197,39 @@ for (marker in marker_order) {
   }
 }
 
-# VISUALS - Results ----
-# Define the order of response groups and immune markers
-response_order <- c("SD", "PD", "CR", "PR")
-marker_order <- c("LAG3", "CD3", "TIM3", "CK", "PD1","CD8")
-
-# Calculate min and max for each marker
-marker_min_max <- lapply(marker_order, function(marker) {
-  counts <- unlist(lapply(response_order, function(response_group) {
-    Q <- grouped_by_response[[response_group]][[marker]]
-    as.vector(round(attributes(Q)$quadratcount, 3))
-  }))
-  c(min = min(counts), max = max(counts))
-})
-
-names(marker_min_max) <- marker_order
-
-# Initialize plotting layout
-par(mfrow = c(6, 4), mar = c(0, 2, 2, 2), oma = c(0, 0, 0, 3))  # Added room on the right for the colorbar
-
-# Loop through each immune marker
-for (marker in marker_order) {
-  
-  # Generate the color palette
-  marker_min <- marker_min_max[[marker]]['min']
-  marker_max <- marker_min_max[[marker]]['max']
-  cols <- colorRampPalette(c("white", "pink", "yellow", "orange", "red"))(10)
-  
-  # Loop through each response group
-  for (response_group in response_order) {
-    
-    # Retrieve the density maps
-    Q <- grouped_by_response[[response_group]][[marker]]
-    
-    # Plot the window
-    plot(attr(Q, "tess")$window, main = NULL, box = FALSE)
-    
-    # Loop to draw and color each tile
-    counts <- as.vector(round(attributes(Q)$quadratcount, 3))
-    tiles <- attr(Q, "tess")$tiles
-    for (i in 1:length(tiles)) {
-      tile <- tiles[[i]]
-      count <- counts[i]
-      col_idx <- findInterval(count, seq(marker_min, marker_max, length.out = length(cols)))
-      plot(tile, add = TRUE, col = cols[col_idx], border = "black")
-    }
-    
-    if (response_group == "SD") {
-      mtext(marker, side = 2, line = 0, cex = 1)
-      
-    } else if (response_group == "PR") {
-      par(xpd = NA)  # Allow plotting in the outer margins
-      legend("right", inset = c(-0.1, 0),  # Adjust inset to move legend
-             legend = rev(round(seq(marker_min, marker_max, length.out = 5), 3)),
-             fill = rev(colorRampPalette(c("white", "cyan", "limegreen", "yellow", "firebrick2"))(5)), 
-             bty = "n", cex = 0.8, title = NULL, box.lty=0)
-      par(xpd = FALSE)  # Restore clipping
-    }
-  }
-}
-
-# Adjust column_positions to better align text
-column_positions <- seq(1/8, 1, by = 1/4)
-mtext(response_order, side = 3, line = -2, outer = TRUE, at = column_positions, cex = 1)
-
 # STATS - Quadrat analysis ----
-# Store the summary statistics
 summary_table <- data.frame()
 
-# Loop through each marker
 for (marker in names(grouped_quadrats[[1]])) {
   
-  # Store the data for Kruskal-Wallis and Levene's tests
+  # Store data for KW and levene
   all_data <- list()
   
   for (response_group in unique(responses$Response)) {
     
-    # IDs belonging to the current response
+    # IDs of current response
     patient_ids <- unique(responses$ID[responses$Response == response_group])
     
-    # Extract the data for current marker and response
+    # Extract data
     marker_data <- lapply(patient_ids, function(id) grouped_quadrats[[as.character(id)]][[marker]])
     
-    # Bind into matrix
+    # Bind
     marker_matrix <- do.call(rbind, marker_data)
     
-    # Store the data for later KW
+    # Store data for KW
     all_data[[as.character(response_group)]] <- marker_matrix
   }
   
-  # Combine all the matrices
+  # Combine
   combined_matrix <- do.call(rbind, all_data)
   
-  # Group vector for Kruskal-Wallis
+  # Group vector for KW
   group_vector <- as.vector(rep(names(all_data), sapply(all_data, nrow)))
   
   # KW and Levene's to each bin (column in combined_matrix)
   for (bin_index in 1:ncol(combined_matrix)) {
     
-    # Data for the current bin
+    # Data of current bin
     bin_data <- combined_matrix[, bin_index]
     
     # Perform Levene's test
@@ -1331,18 +1251,14 @@ for (marker in names(grouped_quadrats[[1]])) {
   }
 }
 
-# Perform FDR correction for KW p-values
-summary_table <- summary_table %>% 
-  mutate(FDR_adj_p_value = p.adjust(KW_p_value, method = "bonferroni"))
-
 # Sort summary table by FDR-adjusted
 summary_table <- summary_table %>% 
-  arrange(FDR_adj_p_value)
+  arrange(KW_p_value) %>%
+  filter(KW_p_value <= 0.05)
 
-head(summary_table)
+summary_table
 
 # Dunn test
-# Initialize
 dunn_results <- data.frame(
   Marker = character(),
   Bin = integer(),
@@ -1354,15 +1270,15 @@ dunn_results <- data.frame(
 
 for (i in 1:nrow(summary_table)) {
   
-  # Check conditions
-  if (!is.na(summary_table$FDR_adj_p_value[i]) && summary_table$FDR_adj_p_value[i] <= 0.05) {
+  # Filter
+  if (!is.na(summary_table$KW_p_value[i]) && summary_table$KW_p_value[i] <= 0.05) {
     marker_bin <- summary_table[i, c("Marker", "Bin"), drop = FALSE]
     
-    # Extract the marker and bin index
+    # Extract marker and bin index
     marker <- marker_bin$Marker
     bin_index <- marker_bin$Bin
     
-    # Extract for the current bin
+    # Extract current bin
     bin_data <- combined_matrix[, bin_index]
     
     # Temp df for data and bin
@@ -1393,9 +1309,81 @@ for (i in 1:nrow(summary_table)) {
 
 # Sort by FDR adj
 dunn_results <- dunn_results %>% 
-  arrange(Adj_P)
+  arrange(Adj_P) %>%
+  filter(Adj_P <= 0.05)
 
-head(dunn_results)
+dunn_results
+
+# VISUALS - Marker distribution per quadrat across groups (Quadrats) ----
+# Order of response groups and immune markers
+response_order <- c("SD", "PD", "CR", "PR")
+marker_order <- c("LAG3", "CD3", "TIM3", "CK", "PD1", "CD8")
+
+# Min and max of each marker
+marker_min_max <- marker_order %>%
+  lapply(function(marker) {
+    counts <- response_order %>%
+      lapply(function(response_group) {
+        Q <- grouped_by_response[[response_group]][[marker]]
+        as.vector(round(attributes(Q)$quadratcount, 3))
+      }) %>%
+      unlist()
+    c(min = min(counts), max = max(counts))
+  }) %>%
+  set_names(marker_order)
+
+# Plot layout
+par(mfrow = c(6, 4), mar = c(0, 0, 2, 2), oma = c(0, 0, 0, 1))  # Added room on the right for the colorbar
+
+marker_order %<>%
+  map(function(marker) {
+    
+    # Color palette
+    marker_min <- marker_min_max[[marker]]['min']
+    marker_max <- marker_min_max[[marker]]['max']
+    cols <- colorRampPalette(c("white", "yellow", "gold", "orange", "firebrick1", "orchid1", "orchid4", "black"))(1000)
+    
+    response_order %<>%
+      map(function(response_group) {
+        
+        # Retrieve quadrats
+        Q <- grouped_by_response[[response_group]][[marker]] # Class quadratcount
+        
+        # Plot window
+        plot(attr(Q, "tess")$window, main = NULL, border = NA)
+        
+        # Draw and color each tile
+        counts <- as.vector(round(attributes(Q)$quadratcount, 3))
+        
+        tiles <- attr(Q, "tess")$tiles
+        tiles %<>%
+          map2(counts, function(tile, count) {
+            col_idx <- findInterval(count, seq(marker_min, marker_max, length.out = length(cols)))
+            plot(tile, add = TRUE, col = cols[col_idx], border = FALSE)
+          })
+        
+        if (response_group == "SD") {
+          mtext(marker, side = 2, line = -1, cex = 1)
+          
+        } else if (response_group == "PR") {
+          par(xpd = NA)  # Allow plotting in outer margins
+          
+          # Normalized colorbar
+          color_range <- seq(marker_min, marker_max, length.out = length(cols))
+          colorbar <- as.matrix(color_range)
+          image.plot(legend.only = TRUE, zlim = c(marker_min, marker_max),
+                     col = cols, horizontal = FALSE,
+                     axis.args = list(at = seq(marker_min, marker_max, by = (marker_max - marker_min) / 4),
+                                      labels = round(seq(marker_min, marker_max, by = (marker_max - marker_min) / 4), 2)))
+          
+          par(xpd = FALSE)  # Restore clipping
+        }
+      })
+  })
+
+# Adjust column_positions to align text
+column_positions <- seq(1/8, 1, by = 1/4)
+mtext(response_order, side = 3, line = -2, outer = TRUE, at = column_positions, cex = 1)
 
 # STATS - Complete Spatial Randomness (CSR) #----
 SpaFx <- data.frame(
@@ -1408,18 +1396,33 @@ SpaFx <- data.frame(
   CK_CSR = numeric(0)
 )
 
+pval_df <- data.frame(
+  Image = character(0),
+  PD1_pval = numeric(0),
+  CD8_pval = numeric(0),
+  CD3_pval = numeric(0),
+  TIM3_pval = numeric(0),
+  LAG3_pval = numeric(0),
+  CK_pval = numeric(0)
+)
+
+# Compare all ppps against homogenous Poisson distribution with MC simulations
 for (i in seq_along(pointpatterns)) {
-  image_name <- names(pointpatterns[i])  # Take the first name if multiple are present
+  image_name <- names(pointpatterns[i])
   pointpattern <- pointpatterns[[i]]
   csr_list <- list()
+  pval_list <- list()
   
   for (marker in names(pointpattern)) {
     ppp_obj <- pointpattern[[marker]]
+    
     if (ppp_obj$n > 0) {
       csr_test <- quadrat.test(ppp_obj, alternative = "clustered", method = "M", conditional = T, nsim = 999)
       csr_list[[marker]] <- csr_test$statistic
+      pval_list[[marker]] <- csr_test$p.value 
     } else {
       csr_list[[marker]] <- NA
+      pval_list[[marker]] <- NA 
     }
   }
   
@@ -1432,16 +1435,30 @@ for (i in seq_along(pointpatterns)) {
     LAG3_CSR = csr_list$LAG3,
     CK_CSR = csr_list$CK
   )
-  
   SpaFx <- rbind(SpaFx, new_row)
-  row.names(SpaFx) <- NULL  # Reset row names to NULL
+  row.names(SpaFx) <- NULL 
+  
+  new_pval_row <- data.frame(
+    Image = image_name,
+    PD1_pval = pval_list$PD1,
+    CD8_pval = pval_list$CD8,
+    CD3_pval = pval_list$CD3,
+    TIM3_pval = pval_list$TIM3,
+    LAG3_pval = pval_list$LAG3,
+    CK_pval = pval_list$CK
+  )
+  
+  pval_df <- rbind(pval_df, new_pval_row)
+  row.names(pval_df) <- NULL 
 }
 
 unique_eda_df <- eda_df[!duplicated(eda_df$Image), ]
 SpaFx$ID <- unique_eda_df$ID[match(SpaFx$Image, unique_eda_df$Image)]
+pval_df$ID <- unique_eda_df$ID[match(pval_df$Image, unique_eda_df$Image)]
 
 SpaFx$R <- as.character(NA)
 
+# Cat matching responses
 for (i in 1:nrow(SpaFx)) {
   matched_id <- SpaFx$ID[i]
   matching_rows <- which(responses$ID == matched_id)
@@ -1453,8 +1470,9 @@ for (i in 1:nrow(SpaFx)) {
 }
 
 head(SpaFx)
+head(pval_df)
 
-# KW test with FDR correction
+# KW test function
 perform_kw_test <- function(df, markers, response_col = "R") {
   kw_p_values <- list()
   
@@ -1463,28 +1481,26 @@ perform_kw_test <- function(df, markers, response_col = "R") {
     kw_test_result <- kruskal.test(as.formula(paste0(marker, "~ ", response_col)), data = df_for_kw)
     kw_p_values[[marker]] <- kw_test_result$p.value
   }
-  
-  kw_p_values <- unlist(kw_p_values)
-  adjusted_p_values <- p.adjust(kw_p_values, method = "fdr")
-  data.frame(Marker = names(adjusted_p_values), Adjusted_P_Value = as.numeric(adjusted_p_values))
+
+  data.frame(Marker = names(kw_p_values), P_Value = as.numeric(kw_p_values))
 }
 
-# Dunn test with Bonferroni correction
+# Dunn test function
 perform_dunn_test <- function(df, markers, response_col = "R") {
   dunn_results <- list()
   
   for(marker in markers) {
     df_for_dunn <- df[!is.na(df[, marker]), c(marker, response_col)]
-    dunn_test_result <- dunnTest(df_for_dunn[, 1], g = as.factor(df_for_dunn[, response_col]), method = "bonferroni")
+    dunn_test_result <- dunnTest(df_for_dunn[, 1], g = as.factor(df_for_dunn[, response_col]), method = "bh")
     dunn_results[[marker]] <- dunn_test_result
   }
   
   dunn_adj_p_values_df <- do.call(rbind, lapply(names(dunn_results), function(marker) {
     res_df <- dunn_results[[marker]]$res
-    data.frame(Marker = marker, Comparison = res_df$Comparison, Adjusted_P_Value = res_df$P.adj)
+    data.frame(Marker = marker, Comparison = res_df$Comparison, P_adj = res_df$P.adj, Z = res_df$Z)
   }))
   
-  dunn_adj_p_values_df[order(dunn_adj_p_values_df$Adjusted_P_Value),]
+  dunn_adj_p_values_df[order(dunn_adj_p_values_df$P_adj),]
 }
 
 markers <- colnames(SpaFx)[2:7]
@@ -1492,22 +1508,31 @@ response_col <- "R"
 
 # KW test
 kw_test_results <- perform_kw_test(SpaFx, markers, response_col)
-print(sort(kw_test_results$Adjusted_P_Value))
 
 # Dunn test
 dunn_test_results <- perform_dunn_test(SpaFx, markers, response_col)
-print(dunn_test_results)
 
-# VISUALS - CSR heatmap ----
+# Clean everything in the console
+cat("\014")
+
+kw_test_results %>%
+  filter(P_Value <= 0.05) %>%
+  arrange(P_Value)
+
+dunn_test_results %>%
+  filter(P_adj <= 0.05) %>%
+  arrange(P_adj)
+
+# VISUALS - CSR (Heatmap) ----
 long_SpaFx <- SpaFx %>%
   gather(key = "Marker", value = "CSR", PD1_CSR:CK_CSR) %>%
   filter(!is.na(CSR))  # Remove NAs
 
 long_SpaFx$Ordered_R <- factor(long_SpaFx$R, levels = c("CR", "PR", "SD", "PD"), ordered = TRUE)  # New Line
 
-# Sort the df by ordered treatment response and by Image
+# Sort df by ordered treatment response and Image
 long_SpaFx <- long_SpaFx %>%
-  arrange(Ordered_R, Image)  # Modified Line
+  arrange(Ordered_R, Image)
 
 long_SpaFx$Ordered_Image <- factor(long_SpaFx$Image, levels = unique(long_SpaFx$Image), ordered = TRUE)
 
@@ -1525,7 +1550,7 @@ long_SpaFx <- long_SpaFx %>%
   mutate(Norm_CSR = (CSR - min_CSR) / (max_CSR - min_CSR))
 
 # Compute global mean of the CSR
-global_median <- mean(long_SpaFx$Norm_CSR, na.rm = TRUE)
+global_median <- mean(long_SpaFx$CSR, na.rm = TRUE)
 
 # Generate labels for y-axis
 unique_images <- unique(long_SpaFx$Ordered_Image)
@@ -1539,8 +1564,8 @@ for (r in response_groups) {
 
 # Wide-format df for heatmap
 heatmap_data <- long_SpaFx %>% 
-  select(Ordered_Image, Marker, Norm_CSR) %>% 
-  spread(key = Marker, value = Norm_CSR)
+  select(Ordered_Image, Marker, CSR) %>% 
+  spread(key = Marker, value = CSR)
 
 rows <- response_labels
 cols <- str_replace(colnames(heatmap_data)[-1], "_CSR", "")
@@ -1553,27 +1578,44 @@ rownames(row_annot) <- rownames(mat)
 
 # Remove _csr suffix
 colnames(mat) <- gsub("_CSR", "", colnames(mat))
+dunn_test_results$Marker <- gsub("_CSR", "", dunn_test_results$Marker)
 
-# Plot
+crosses <- dunn_test_results %>%
+  filter(dunn_test_results$P_adj <= 0.05)
+
+# Plot dunn test results
+p <- ggplot(dunn_test_results, aes(x=Comparison, y=Marker, fill=P_adj)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = brewer.pal(11, "RdYlBu"), name = "Adj.p") +
+  geom_point(data = crosses, aes(x=Comparison, y=Marker), 
+             shape=3, size=6, stroke=3, color="white")
+
+p
+
+# Plot CSR heatmap
 heatmaply(mat,
-          row_side_colors = row_annot,
-          row_side_palette = c("CR" = "forestgreen", "PR" = "green3", "SD" = "salmon", "PD" = "firebrick1"),
-          colors = YlOrRd,  # Divergent color scale
+          row_side_colors = row_annot$Response,
+          row_side_palette = c("CR" = "chartreuse", "PR" = "tan1", "SD" = "tomato", "PD" = "firebrick4"),
+          colors = turbo, 
+          na.value = "black",
           main = "",
           scale = "column",
           titleX = FALSE,
           titleY = FALSE,
           subplot_widths = c(0.95, 0.05),  
-          margins = c(20, 20, 20, 100),  # Increased margins
-          hide_colorbar = TRUE,
-          labRow = NULL,  # This will eliminate all y-ticks text
-          labCol = colnames(mat),  # This reinstates the immune markers
-          column_text_angle = 0,  # This should set the x-axis tick labels angle to 0
+          margins = c(20, 20, 20, 100),  
+          hide_colorbar = F,
+          labRow = NULL,  
+          labCol = colnames(mat), 
+          column_text_angle = 0,  
           showticklabels = c(TRUE, FALSE),
-          grid_color = NA,  # Eliminate grid
+          grid_color = NA, 
           dendrogram = "none",
-          width = 800,  # Set width
-          height = 800)  # Set height
+          width = 800,  
+          height = 800,
+          plot_method = "ggplot")
+
+dev.set(which = dev.prev())
 
 # STATS - Optimal number of bins ----
 # User-provided data and information
@@ -1589,7 +1631,7 @@ radius <- max(distances)
 w <- disc(radius=max_radius, centre=c(center_x, center_y))
 markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
-# Initialize a dataframe to store the overall RSS for each number of bins
+# Store overall RSS for each number of bins
 overall_bin_metrics <- data.frame(BinNumber = numeric(), OverallRSS = numeric(), stringsAsFactors = FALSE)
 
 # Function to calculate RSS for a given n_bins
@@ -1640,6 +1682,7 @@ overall_bin_metrics <- do.call(rbind, result_list)
 # Stop the cluster
 stopCluster(cl)
 
+# VISUALS - Bin tests (Elbow plot) ----
 # Plot the results
 plot(overall_bin_metrics$BinNumber, overall_bin_metrics$OverallRSS, type="b", xlab="Number of Bins", ylab="Overall RSS")
 
@@ -1676,8 +1719,8 @@ bandwidth_results <- parallel::parLapply(cl, image_names, function(image_name) {
   calculate_bandwidths(image_name, eda_df)
 })
 
-# VISUALS - Bandwidth tests ----
-# Plot the distribution of optimal bandwidths
+# VISUALS - Bandwidth tests (Histograms) ----
+# Plot distribution of optimal bandwidths
 par(mfrow = c(5, 1))
 hist(sapply(bandwidth_results, function(x) x$bw_diggle), main = NULL, xlab = 'Bandwidth', breaks = 20)
 hist(sapply(bandwidth_results, function(x) x$ppl), main = NULL, xlab = 'Bandwidth', breaks = 20)
@@ -1685,9 +1728,180 @@ hist(sapply(bandwidth_results, function(x) x$cvl), main = NULL, xlab = 'Bandwidt
 hist(sapply(bandwidth_results, function(x) x$adpt), main = NULL, xlab = 'Bandwidth', breaks = 20)
 hist(unlist(sapply(bandwidth_results, function(x) x$abraham)), main = NULL, xlab = 'Bandwidth', breaks = 20)
 
-########################################### FEATURE 3 - MARKER HEATMAP (S/T) -----
-# EXTRACT - MARKER INTENSITY HEATMAP (SPATSTAT continuous?) ----
-# VISUALS - 1 patient variation heatmap ----
+########################################### F3 - Marks -----
+# EXTRACT - Extract intensity heatmaps ----
+spiat_scattercount <- list()
+
+# Extraction function
+extract_data_from_spatial_experiment <- function(plots_list) {
+  
+  for (marker in names(plots_list)) {
+    X <- plots_list[[marker]]$data$Cell.X.Position
+    Y <- plots_list[[marker]]$data$Cell.Y.Position
+    PD1 <- plots_list[[marker]]$data$PD1
+    CD8 <- plots_list[[marker]]$data$CD8
+    CD3 <- plots_list[[marker]]$data$CD3
+    LAG3 <- plots_list[[marker]]$data$LAG3
+    TIM3 <- plots_list[[marker]]$data$TIM3
+    CK <- plots_list[[marker]]$data$CK
+    Pheno <- plots_list[[marker]]$data$Phenotype
+    L <- list(P = Pheno, X = X, Y = Y, PD1 = PD1, CD8 = CD8, CD3 = CD3, LAG3 = LAG3, TIM3 = TIM3, CK = CK)
+  }
+  
+  return(list(P = L$P, X = L$X, Y = L$Y, PD1 = L$PD1, CD8 = L$CD8, CD3 = L$CD3, LAG3 = L$LAG3, TIM3 = L$TIM3, CK = L$CK))
+}
+
+# Loop through each image
+spiat_scattercount <- pblapply(SPIAT_tifs, function(selected_image) {
+  
+  # Filter data
+  selected_data <- subset(raw_measurements, Image %in% selected_image)
+  selected_data <- selected_data %>% 
+    select(-1) # Remove "Image" name column
+  
+  # Extract coordinates and intensity matrix
+  x_cord <- t(selected_data)[1 , ] 
+  y_cord <- t(selected_data)[2 , ]
+  
+  intensity_matrix <- t(selected_data[ , -c(1:2)])
+  intensity_matrix <- as.data.frame(intensity_matrix)
+  
+  colnames(intensity_matrix) <- paste0("Cell_", as.character(1: ncol(intensity_matrix)))
+  rownames(intensity_matrix) <- c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
+  
+  # Extract phenotype
+  phenotype = rep(NA, ncol(intensity_matrix))
+  
+  # Create spatial experiment (S4 object)
+  general_format_image <- format_image_to_spe(
+    format = "general",
+    phenotypes = phenotype,
+    intensity_matrix = intensity_matrix,
+    coord_x = x_cord,
+    coord_y = y_cord
+  )
+  
+  # Predict cell phenotypes
+  predicted_image <- predict_phenotypes(
+    spe_object = general_format_image,
+    thresholds = NULL,
+    tumour_marker = "CK",
+    baseline_markers = c("PD1", "CD8", "CD3", "TIM3", "LAG3"),
+    nuclear_marker = "DAPI",
+    reference_phenotypes = FALSE,
+    plot_distribution = FALSE
+  )
+  
+  marker_names <- predicted_image@rowRanges@partitioning@NAMES
+  marker_names <- marker_names[marker_names != "DAPI"]
+  plots_list <- list()
+  
+  for (marker in marker_names) {
+    tryCatch({
+      marker_plot <- plot_cell_marker_levels(predicted_image, marker)
+      plots_list[[marker]] <- marker_plot
+    }, error = function(e) {
+      message(paste("Error for marker", marker, ":", e$message))
+    })
+  }
+  
+  # Extract the required data
+  extracted_data <- extract_data_from_spatial_experiment(plots_list)
+  
+  # Return the data along with the image name
+  return(list(Image = selected_image, P = extracted_data$P, X = extracted_data$X, Y = extracted_data$Y, PD1 = extracted_data$PD1, CD8 = extracted_data$CD8, CD3 = extracted_data$CD3, LAG3 = extracted_data$LAG3, TIM3 = extracted_data$TIM3, CK = extracted_data$CK))
+  
+})
+
+# Name entries
+names(spiat_scattercount) <- sapply(spiat_scattercount, function(x) x$Image)
+
+# Cat matching response and ID
+spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
+  
+  # Find matching ID based on image name
+  matching_ID <- unique(eda_df$ID[eda_df$Image == x$Image])
+  
+  if (length(matching_ID) == 1) {
+    x$ID <- matching_ID
+    
+    # Find matching response based on ID
+    matching_Response <- responses$Response[responses$ID == matching_ID]
+    
+    if (length(matching_Response) == 1) {
+      x$Response <- matching_Response
+      
+    } else {
+      warning(paste("No matching Response found for ID:", matching_ID))
+    }
+    
+  } else {
+    warning(paste("No matching ID found for Image:", x$Image))
+  }
+  
+  return(x)
+})
+
+# Generate standardized window of observation
+allX_list <- lapply(spiat_scattercount, function(x) x$X)
+allY_list <- lapply(spiat_scattercount, function(x) x$Y)
+center_x <- median(unlist(allX_list))
+center_y <- median(unlist(allY_list))
+distances <- sqrt((unlist(allX_list) - center_x)^2 + (unlist(allY_list) - center_y)^2)
+radius <- max(distances)
+w <- disc(radius=radius, centre=c(center_x, center_y)) # Window w
+
+immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
+
+# PROCESS - Creation of a PPP Hyperframe ----
+first_img_data <- spiat_scattercount[[1]]
+first_img_data_df <- as.data.frame(first_img_data)
+first_ppp_list <- list()
+
+for (phenotype in unique(first_img_data[["P"]])) {
+  subset_data <- subset(first_img_data_df, P == phenotype)
+  
+  if(nrow(subset_data) > 0) {
+    ppp <- ppp(x = subset_data$X, y = subset_data$Y,
+               marks = data.frame(PD1 = subset_data$PD1, CD8 = subset_data$CD8,
+                                  CD3 = subset_data$CD3, LAG3 = subset_data$LAG3,
+                                  TIM3 = subset_data$TIM3, CK = subset_data$CK), 
+               window = w, checkdup = FALSE)
+    first_ppp_list[[phenotype]] <- ppp
+  }
+}
+
+hf <- hyperframe(I = unique(first_img_data$Image), ppp = list(first_ppp_list), ID = unique(first_img_data$ID), Response = unique(first_img_data$Response))
+
+for (i in 2:length(spiat_scattercount)) {
+  
+  img_data <- spiat_scattercount[[i]]
+  img_data_df <- as.data.frame(img_data)
+  
+  ppp_list <- list()
+  
+  # Loop through phenotypes
+  for (phenotype in unique(img_data[["P"]])) {
+    subset_data <- subset(img_data_df, P == phenotype)
+    
+    if(nrow(subset_data) > 0) {
+      ppp <- ppp(x = subset_data$X, y = subset_data$Y,
+                 marks = data.frame(PD1 = subset_data$PD1, CD8 = subset_data$CD8,
+                                    CD3 = subset_data$CD3, LAG3 = subset_data$LAG3,
+                                    TIM3 = subset_data$TIM3, CK = subset_data$CK), 
+                 window = w, checkdup = FALSE)
+      ppp_list[[phenotype]] <- ppp
+    }
+  }
+  
+  # Append to hyperframe
+  new_row <- hyperframe(I = unique(img_data$Image), ppp = list(ppp_list), ID = unique(img_data$ID), Response = unique(img_data$Response))
+  hf <- rbind.hyperframe(hf, new_row)
+}
+
+plot(hf$ppp[[sample(1:90, 1)]]$CK, clipwin = w, use.marks = F, pch = 20) # Plots the ppp object of the 2oth image from the hyperframe.
+
+# VISUALS - Intratumor variation (Heatmap) ----
 p <- ggplot(eda_df[eda_df$ID == unique(eda_df$ID)[1],], aes(x = X, y = Y)) +
   stat_summary_2d(aes(z = LAG3, fill = after_stat(value)), fun = median, bins = 20) +
   facet_wrap(~ Image) +
@@ -1697,32 +1911,30 @@ p <- ggplot(eda_df[eda_df$ID == unique(eda_df$ID)[1],], aes(x = X, y = Y)) +
 
 ggplotly(p)
 
-bin_n <- 100 # Select bin number for tiling ----
+bin_n <- 90 # Select bin number for tiling ----
 marker_of_interest <- "PD1" # Select marker of interest ----
-## Extraction of the data ----
-#! PROBLEM - Handling intensity on borders of tumor !#
+# PROCESS - Continuous mark aggregation----
 # Global binning based on entire data set
 global_bin_width <- (max(eda_df$X) - min(eda_df$X)) / bin_n
 global_min_x <- min(eda_df$X)
 global_min_y <- min(eda_df$Y)
 
-# Convert the dataframe to long format
+# Convert df to long format
 eda_df_long <- eda_df %>%
   pivot_longer(cols = c(PD1, CD8, CD3, TIM3, LAG3, CK),
                names_to = "marker",
                values_to = "value")
 
-# Create an empty list to store the results for each patient
+# Store results for each patient
 tiled_markerheatmap_xID <- list()
 
-# Get unique patient IDs
+# Get unique IDs
 unique_ids <- unique(eda_df$ID)
 
-# Iterate over each unique patient ID
 for(id in unique_ids) {
   
-  # Create bins for the current patient based on global bins
-  bin_data <- eda_df_long[eda_df_long$ID == id,] %>%  ########### ODIO ESTA LINEA!!!!!!
+  # Creates bins for the current patient
+  bin_data <- eda_df_long[eda_df_long$ID == id,] %>%  
     mutate(
       bin_x = floor((X - global_min_x) / global_bin_width),
       bin_y = floor((Y - global_min_y) / global_bin_width)
@@ -1748,25 +1960,23 @@ for(id in unique_ids) {
       Y = global_min_y + (bin_y + 0.5) * global_bin_width,
     )
   
-  # Store the result in the list
+  # Store result
   tiled_markerheatmap_xID[[as.character(id)]] <- resultado
   print(paste("Processing patient", id, "data."))
 }
 
-# Initialize an empty list to store the results for each response
 tiled_markerheatmap_xResponse <- list()
 
-# Iterate through the unique response groups
 for (response in unique(responses$Response)) {
   
   print(paste("Retrieving", response, "IDs."))
   
-  # Get the IDs associated with the current response group
+  # Get IDs associated with current response
   matching_ids <- as.character(responses$ID[responses$Response == response])
   
   print(paste("Matching IDs:", cat(matching_ids)))
   
-  # Filter tiled_markerheatmap_xResponse by the matching IDs but maintain the individual structure
+  # Filter tiled_markerheatmap_xResponse by the matching IDs
   tiled_markerheatmap_xResponse[[response]] <- tiled_markerheatmap_xID[matching_ids]
 }
 
@@ -1776,14 +1986,14 @@ tiled_medmarkerint_xResponse <- list()
 for (response in names(tiled_markerheatmap_xResponse)) {
   patient_list <- tiled_markerheatmap_xResponse[[response]]
   
-  # Combine all patient data for current response
+  # Combine all data per response group
   combined_data <- bind_rows(patient_list) %>% 
     filter(marker == marker_of_interest)
   
-  # Compute median for each bin location across all patients of current response
+  # Compute mean of each bin
   response_data <- combined_data %>%
     group_by(bin_x, bin_y, X, Y) %>%
-    summarise(median_value = median(median_value_across_images, na.rm = TRUE)) %>%
+    summarise(median_value = mean(median_value_across_images, na.rm = TRUE)) %>%
     mutate(marker = marker_of_interest) %>%
     ungroup()
   
@@ -1798,8 +2008,7 @@ all_data <- bind_rows(lapply(names(tiled_medmarkerint_xResponse), function(respo
   return(df)
 }))
 
-## VISUALS - Results ----
-# Plot
+# VISUALS - Marker intensity per response group (Raster) ----
 p_resultado <- ggplot(all_data, aes(x = X, y = Y, fill = log1p(median_value))) +
   geom_tile() +
   scico::scale_fill_scico(palette = "lajolla") +
@@ -1813,177 +2022,352 @@ suppressWarnings({
   rm(bin_data, resultado, combined_data, response_data, tiled_markerheatmap_xID)
 })
 
-## STATISTICS ----
-########################################### FEATURE 4 (S/T) -----
-# EXTRACT - Categorical dotplot locations ----
-# Initialize empty list
-list_of_dataframes <- list()
+########################################### F4 - Distances -----
+# EXTRACT - Cell distances ----
+# PROCESS - Picking phenotypes ----
+# Filtering phenotypes to chose
+# Calculate mean proportion
+mean_proportions <- merged_data %>%
+  group_by(spiat_Phenotype) %>%
+  summarise(mean_prop = mean(spiat_Prop, na.rm = TRUE),
+            n = n_distinct(ID)) 
 
-# Iterate through each image
-for (i in seq_along(spiat_predicted_phenotypes)) {
+# Filter out phenotypes
+all_patient_count <- length(unique(merged_data$ID))
+filtered_phenotypes <- mean_proportions %>%
+  filter(n == all_patient_count)
+
+# Sort by mean proportion
+sorted_phenotypes <- filtered_phenotypes %>%
+  arrange(desc(mean_prop))
+
+sorted_phenotypes <- sorted_phenotypes %>%
+  mutate(mean_prop_percent = mean_prop * 100)
+
+print(sorted_phenotypes)
+
+# PROCESS - Main extraction ----
+# Iterate over all images
+distance_features <- list()
+
+# Loop through each image
+distance_features <- pblapply(SPIAT_tifs, function(selected_image) {
   
-  # Extract data
-  image_name <- spiat_predicted_phenotypes[[i]]$image_name
-  coords <- spiat_predicted_phenotypes[[i]]$spatial_coords
-  phenotype <- spiat_predicted_phenotypes[[i]]$phenotype
+  # Filter data based on the current image
+  selected_data <- subset(raw_measurements, Image %in% selected_image)
+  selected_data <- selected_data %>% 
+    select(-1) # Remove "Image" name column
   
-  # Convert data to dataframe
-  df <- data.frame(
-    Image = image_name,
-    X = coords[, "Cell.X.Position"],
-    Y = coords[, "Cell.Y.Position"],
-    Phenotype = phenotype
+  # Extract coordinates and intensity matrix
+  x_cord <- t(selected_data)[1 , ] 
+  y_cord <- t(selected_data)[2 , ]
+  
+  intensity_matrix <- t(selected_data[ , -c(1:2)])
+  intensity_matrix <- as.data.frame(intensity_matrix)
+  
+  colnames(intensity_matrix) <- paste0("Cell_", as.character(1: ncol(intensity_matrix)))
+  rownames(intensity_matrix) <- c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
+  
+  # Extract phenotype
+  phenotype = rep(NA, ncol(intensity_matrix))
+  
+  # Create spatial experiment (S4 object)
+  general_format_image <- format_image_to_spe(
+    format = "general",
+    phenotypes = phenotype,
+    intensity_matrix = intensity_matrix,
+    coord_x = x_cord,
+    coord_y = y_cord
   )
   
-  # Append
-  list_of_dataframes[[i]] <- df
+  # Predict cell phenotypes
+  predicted_image <- predict_phenotypes(
+    spe_object = general_format_image,
+    thresholds = NULL,
+    tumour_marker = "CK",
+    baseline_markers = c("PD1", "CD8", "CD3", "TIM3", "LAG3"),
+    nuclear_marker = "DAPI",
+    reference_phenotypes = FALSE,
+    plot_distribution = FALSE
+  )
   
-}
+  marker_names <- predicted_image@rowRanges@partitioning@NAMES
+  marker_names <- marker_names[marker_names != "DAPI"]
 
-# Combine
-spiat_pheno_xy <- do.call(rbind, list_of_dataframes)
+  # Cell distances
+  distances <- calculate_pairwise_distances_between_celltypes(
+    spe_object = predicted_image, 
+    cell_types_of_interest = c("CD3", "CD8,CD3", "CD8,CD3,TIM3", "PD1,CD8,CD3", "CD3,TIM3", "PD1,CD3", "TIM3"),
+    feature_colname = "Phenotype")
+  summary_distances <- calculate_summary_distances_between_celltypes(distances)
+  
+  # Minimum cell distances
+  min_dist <- calculate_minimum_distances_between_celltypes(
+    spe_object = predicted_image, 
+    cell_types_of_interest = c("CD3", "CD8", "CD8,CD3", "CD8,CD3,TIM3", "PD1,CD8,CD3", "CD3,TIM3", "PD1,CD3", "TIM3"),
+    feature_colname = "Phenotype")
+  min_summary_dist <- calculate_summary_distances_between_celltypes(min_dist)
+  
+  # Return the data along with the image name
+  return(list(Image = selected_image, PDists = distances, PDistsSum = summary_distances, MinDists = min_dist, MindistsSum = min_summary_dist))
+  
+})
 
-# Add the ID and response columns
-spiat_pheno_xy$ID <- eda_df$ID[match(spiat_pheno_xy$Image, eda_df$Image)]
-spiat_pheno_xy$Response <- responses$Response[match(spiat_pheno_xy$ID, responses$ID)]
+# Name list entries
+names(distance_features) <- sapply(distance_features, function(x) x$Image)
 
-# Rearrange
-spiat_pheno_xy <- spiat_pheno_xy[, c("Image", "ID", "Phenotype", "Response", "X", "Y")]
-
-rm(coords, df, i, image_name, phenotype, list_of_dataframes)
-
-########################################### FEATURE 5 (S/T) -----
-# EXTRACT - Cell distances ----
-# Aqui tengo que hacer un histograma antes de cuales son las celulas de todos estos hp que mas influyen tal vez PCA?
-########################################### FEATURE 6 (S/T) -----
-## Custom tiling ----
-plot_sample <- function(spiat_scattercount, image_name, marker, bins) {
+## Matching response and ID
+distance_features <- pblapply(distance_features, function(x) {
   
-  # Get the data for the specific image
-  image_data_list <- spiat_scattercount[[image_name]]
+  # Find the matching ID from eda_df based on Image
+  matching_ID <- unique(eda_df$ID[eda_df$Image == x$Image])
   
-  # Convert the list to a data frame
-  original <- as.data.frame(image_data_list)
-  
-  # Global binning based on entire data set
-  global_bin_width <- (max(original$X) - min(original$X)) / bins
-  
-  # Subset the data to only include rows where "P" contains the specified marker
-  image_data <- original[grepl(marker, original$P, fixed = TRUE), ]
-  
-  # Create the ggplot
-  gg <- ggplot() +
-    geom_bin2d(data = image_data, 
-               aes(x = X, y = Y, fill = after_stat(count)),  # Update as per the warning
-               binwidth = c(50, 50), 
-               alpha = 0.9) +
-    geom_point(data = image_data, 
-               aes(x = X, y = Y, alpha = 0.99)) +
-    scale_fill_distiller(palette = "RdYlBu") +
-    coord_fixed() +
-    theme(panel.background = element_blank())
-  
-  print(gg)
-}
-
-plot_sample(spiat_scattercount, SPIAT_tifs[1], "LAG3", 21)
-
-## Intensity bubble plot ----
-plot_sample <- function(spiat_scattercount, image_name, marker, r) {
-  
-  image_data <- as.data.frame(spiat_scattercount[[image_name]])
-  image_data <- image_data[grepl(marker, image_data$P, fixed = TRUE), ]
-  
-  # Calculate IQR for X and Y
-  iqr_x <- IQR(image_data$X)
-  iqr_y <- IQR(image_data$Y)
-  
-  # Use a fraction of the smaller IQR as radius
-  radius <- min(iqr_x, iqr_y) * r
-  
-  bin_counts <- data.frame(X = numeric(), Y = numeric(), Count = numeric())
-  
-  for (i in 1:nrow(image_data)) {
-    x_center <- image_data$X[i]
-    y_center <- image_data$Y[i]
+  if (length(matching_ID) == 1) {
+    x$ID <- matching_ID
     
-    within_radius <- (image_data$X - x_center)^2 + (image_data$Y - y_center)^2 <= radius^2
-    count <- sum(within_radius)
+    # Find the matching Response from responses based on ID
+    matching_Response <- responses$Response[responses$ID == matching_ID]
     
-    # Debugging print
-    if(count == 1) {
-      print(paste("Only one point at X:", x_center, ", Y:", y_center))
+    if (length(matching_Response) == 1) {
+      x$Response <- matching_Response
+    } else {
+      warning(paste("No matching Response found for ID:", matching_ID))
     }
-    
-    bin_counts <- rbind(bin_counts, data.frame(X = x_center, Y = y_center, Count = count))
+  } else {
+    warning(paste("No matching ID found for Image:", x$Image))
   }
   
-  # Sort by Count to ensure smaller points are plotted first
-  bin_counts <- bin_counts[order(bin_counts$Count), ]
+  return(x)
+})
+
+# PROCESS - Main extraction (parallel) ----
+# Iterate over all images
+distance_features <- list()
+
+# Set up the cluster
+n_cores <- detectCores() - 1
+cl <- makeCluster(n_cores)
+
+# Export variables and libraries to the cluster
+clusterExport(cl, c("SPIAT_tifs", "raw_measurements", "eda_df"))
+clusterEvalQ(cl, {
+  library(dplyr)
+  library(pbapply)
+  library(SPIAT)
+})
+
+# Run the parallelized loop
+distance_features <- parLapply(cl, SPIAT_tifs, function(selected_image) {
   
-  # Create base R plot
-  plot(bin_counts$X, bin_counts$Y, type = "n", xlab = "X", ylab = "Y", main = marker)  # Empty plot for setting axes
+  # Filter data based on the current image
+  selected_data <- subset(raw_measurements, Image %in% selected_image)
+  selected_data <- selected_data %>% 
+    select(-1) # Remove "Image" name column
   
-  # Add points with color and size based on Count
-  color_range <- colorRampPalette(c("blue", "red"))(max(bin_counts$Count))
-  point_colors <- color_range[bin_counts$Count]
-  point_sizes <- sqrt(bin_counts$Count)  # Adjust as needed
+  # Extract coordinates and intensity matrix
+  x_cord <- t(selected_data)[1 , ] 
+  y_cord <- t(selected_data)[2 , ]
   
-  points(bin_counts$X, bin_counts$Y, col = point_colors, cex = point_sizes, pch = 20)
+  intensity_matrix <- t(selected_data[ , -c(1:2)])
+  intensity_matrix <- as.data.frame(intensity_matrix)
   
-  return(NULL)
+  colnames(intensity_matrix) <- paste0("Cell_", as.character(1: ncol(intensity_matrix)))
+  rownames(intensity_matrix) <- c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
+  
+  # Extract phenotype
+  phenotype = rep(NA, ncol(intensity_matrix))
+  
+  # Create spatial experiment (S4 object)
+  general_format_image <- format_image_to_spe(
+    format = "general",
+    phenotypes = phenotype,
+    intensity_matrix = intensity_matrix,
+    coord_x = x_cord,
+    coord_y = y_cord
+  )
+  
+  # Predict cell phenotypes
+  predicted_image <- predict_phenotypes(
+    spe_object = general_format_image,
+    thresholds = NULL,
+    tumour_marker = "CK",
+    baseline_markers = c("PD1", "CD8", "CD3", "TIM3", "LAG3"),
+    nuclear_marker = "DAPI",
+    reference_phenotypes = FALSE,
+    plot_distribution = FALSE
+  )
+  
+  marker_names <- predicted_image@rowRanges@partitioning@NAMES
+  marker_names <- marker_names[marker_names != "DAPI"]
+  
+  # Cell distances
+  distances <- calculate_pairwise_distances_between_celltypes(
+    spe_object = predicted_image, 
+    cell_types_of_interest = c("CK", "CD3", "CD8", "CD8,CD3", "CD8,CD3,TIM3", "PD1,CD8,CD3", "CD3,TIM3", "PD1,CD3", "TIM3"),
+    feature_colname = "Phenotype")
+  summary_distances <- calculate_summary_distances_between_celltypes(distances)
+  
+  # Minimum cell distances
+  min_dist <- calculate_minimum_distances_between_celltypes(
+    spe_object = predicted_image, 
+    cell_types_of_interest = c("CK", "CD3", "CD8", "CD8,CD3", "CD8,CD3,TIM3", "PD1,CD8,CD3", "CD3,TIM3", "PD1,CD3", "TIM3"),
+    feature_colname = "Phenotype")
+  min_summary_dist <- calculate_summary_distances_between_celltypes(min_dist)
+  
+  # Return the data along with the image name
+  return(list(Image = selected_image, PDists = distances, PDistsSum = summary_distances, MinDists = min_dist, MindistsSum = min_summary_dist))
+  
+})
+
+stopCluster(cl)
+
+
+# PROCESS - Convert extractions to summary dataframes ----
+format_summary <- function(df, id, response, image_name){
+  df <- df %>%
+    select(Pair, Mean, Min, Max, Median, Std.Dev) %>%
+    mutate(Image = image_name,
+           ID = id,
+           Response = response)
+  
+  return(df)
 }
 
-gg_custom_scatter <- plot_sample(spiat_scattercount, SPIAT_tifs[1], "LAG3", 0.2)
+pdsum_list <- list()
+mdsum_list <- list()
 
-# DATA - SpiatScatterplot Hyperframe ----
-# Initialize with first image
-first_img_data <- spiat_scattercount[[1]]
-first_img_data_df <- as.data.frame(first_img_data)
-
-first_ppp_list <- list()
-
-# Loop through each unique phenotype
-for (phenotype in unique(first_img_data[["P"]])) {
-  subset_data <- subset(first_img_data_df, P == phenotype)
+for(i in 1:length(distance_features)){
+  pdsum_list[[i]] <- format_summary(
+    distance_features[[i]][['PDistsSum']],
+    distance_features[[i]][['ID']],
+    distance_features[[i]][['Response']],
+    names(distance_features)[i]
+  )
   
-  if(nrow(subset_data) > 0) {
-    ppp <- ppp(x = subset_data$X, y = subset_data$Y,
-               marks = data.frame(PD1 = subset_data$PD1, CD8 = subset_data$CD8,
-                                  CD3 = subset_data$CD3, LAG3 = subset_data$LAG3,
-                                  TIM3 = subset_data$TIM3, CK = subset_data$CK), 
-               window = w, checkdup = FALSE)
-    first_ppp_list[[phenotype]] <- ppp
-  }
+  mdsum_list[[i]] <- format_summary(
+    distance_features[[i]][['MindistsSum']],
+    distance_features[[i]][['ID']],
+    distance_features[[i]][['Response']],
+    names(distance_features)[i]
+  )
 }
 
-hf <- hyperframe(I = unique(first_img_data$Image), ppp = list(first_ppp_list), ID = unique(first_img_data$ID), Response = unique(first_img_data$Response))
+# Combine all data frames into single data frames
+pdsum_df <- bind_rows(pdsum_list)
+mdsum_df <- bind_rows(mdsum_list)
 
-# Loop through remaining images
-for (i in 2:length(spiat_scattercount)) {
-  
-  img_data <- spiat_scattercount[[i]]
-  img_data_df <- as.data.frame(img_data)
-  
-  ppp_list <- list()
-  
-  # Loop through each unique phenotype
-  for (phenotype in unique(img_data[["P"]])) {
-    subset_data <- subset(img_data_df, P == phenotype)
-    
-    if(nrow(subset_data) > 0) {
-      ppp <- ppp(x = subset_data$X, y = subset_data$Y,
-                 marks = data.frame(PD1 = subset_data$PD1, CD8 = subset_data$CD8,
-                                    CD3 = subset_data$CD3, LAG3 = subset_data$LAG3,
-                                    TIM3 = subset_data$TIM3, CK = subset_data$CK), 
-                 window = w, checkdup = FALSE)
-      ppp_list[[phenotype]] <- ppp
-    }
-  }
-  
-  # Append to hyperframe
-  new_row <- hyperframe(I = unique(img_data$Image), ppp = list(ppp_list), ID = unique(img_data$ID), Response = unique(img_data$Response))
-  hf <- rbind.hyperframe(hf, new_row)
+# Rearrange columns
+pdsum_df <- pdsum_df %>% select(Image, ID, Response, Pair, Min, Mean, Median, Max, Std.Dev)
+mdsum_df <- mdsum_df %>% select(Image, ID, Response, Pair, Min, Mean, Median, Max, Std.Dev)
+
+# PROCESS - Aggregate by patient ID ----
+# Aggregate by ID
+agg_pdsum_df <- pdsum_df %>%
+  group_by(ID, Pair) %>%
+  summarise(
+    Min = min(Min, na.rm = TRUE),
+    Max = max(Max, na.rm = TRUE),
+    Mean = mean(Mean, na.rm = TRUE),
+    Response = dplyr::first(as.character(Response))
+  )
+
+agg_mdsum_df <- mdsum_df %>%
+  group_by(ID, Pair) %>%
+  summarise(
+    Min = min(Min, na.rm = TRUE),
+    Max = max(Max, na.rm = TRUE),
+    Mean = mean(Mean, na.rm = TRUE),
+    Response = dplyr::first(as.character(Response))
+  )
+
+# STATS - KW ----
+# Perform Kruskal-Wallis test on the Mean distance grouped by Response
+# Splitting the data by 'Pair'
+# KW for pairwise distances
+list_of_dfs_by_pair <- split(agg_pdsum_df, agg_pdsum_df$Pair)
+
+kruskal_results <- data.frame(Pair=character(), Kruskal_p_value=numeric())
+
+# Kruskal-Wallis test for each pair
+for (pair in names(list_of_dfs_by_pair)) {
+  df_pair <- list_of_dfs_by_pair[[pair]]
+  kruskal_test_result <- kruskal.test(Mean ~ Response, data = df_pair)
+  kruskal_results <- rbind(kruskal_results, data.frame(Pair = pair, Kruskal_p_value = kruskal_test_result$p.value))
 }
 
-plot(hf$ppp[[sample(1:90, 1)]]$CK, clipwin = w, use.marks = F, pch = 20) # Plots the ppp object of the 2oth image from the hyperframe.
+print(kruskal_results[order(kruskal_results$Kruskal_p_value), ])
+
+# Dunn test for pairwise distances
+# Filter out pairs with Kruskal p-value <= 0.05
+significant_kruskal_results <- kruskal_results[kruskal_results$Kruskal_p_value <= 0.05, ]
+
+dunn_test_results_df <- data.frame()
+
+# Dunn Test for the filtered pairs
+for (pair in significant_kruskal_results$Pair) {
+  df_pair <- list_of_dfs_by_pair[[pair]]
+  dunn_test_result <- dunnTest(Mean ~ Response, data = df_pair, method = "bh")
+  
+  dunn_df_temp <- data.frame(
+    Pair = rep(pair, nrow(dunn_test_result$res)),
+    Comparison = dunn_test_result$res$Comparison,
+    Z = dunn_test_result$res$Z,
+    P.unadj = dunn_test_result$res$`P.unadj`,
+    P.adj = dunn_test_result$res$`P.adj`
+  )
+  
+  # Append to main results data frame
+  dunn_test_results_df <- rbind(dunn_test_results_df, dunn_df_temp)
+}
+
+# Filter and sort the results based on adjusted p-value
+filtered_sorted_dunn_results <- dunn_test_results_df %>% 
+  arrange(P.adj)
+
+# Print the filtered and sorted results
+print(filtered_sorted_dunn_results)
+
+# KW for min distances
+# Splitting the data by 'Pair'
+list_of_dfs_by_pair <- split(agg_mdsum_df, agg_mdsum_df$Pair)
+kruskal_results <- data.frame(Pair=character(), Kruskal_p_value=numeric())
+
+# Kruskal-Wallis test for each pair
+for (pair in names(list_of_dfs_by_pair)) {
+  df_pair <- list_of_dfs_by_pair[[pair]]
+  kruskal_test_result <- kruskal.test(Mean ~ Response, data = df_pair)
+  kruskal_results <- rbind(kruskal_results, data.frame(Pair = pair, Kruskal_p_value = kruskal_test_result$p.value))
+}
+
+print(kruskal_results[order(kruskal_results$Kruskal_p_value), ])
+
+# Dunn test for pairwise distances
+# Filter out pairs with Kruskal p-value <= 0.05
+significant_kruskal_results <- kruskal_results[kruskal_results$Kruskal_p_value <= 0.05, ]
+
+dunn_test_results_df <- data.frame()
+
+# Dunn Test for the filtered pairs
+for (pair in significant_kruskal_results$Pair) {
+  df_pair <- list_of_dfs_by_pair[[pair]]
+  dunn_test_result <- dunnTest(Mean ~ Response, data = df_pair, method = "bh")
+  
+  dunn_df_temp <- data.frame(
+    Pair = rep(pair, nrow(dunn_test_result$res)),
+    Comparison = dunn_test_result$res$Comparison,
+    Z = dunn_test_result$res$Z,
+    P.unadj = dunn_test_result$res$`P.unadj`,
+    P.adj = dunn_test_result$res$`P.adj`
+  )
+  
+  # Append to main results data frame
+  dunn_test_results_df <- rbind(dunn_test_results_df, dunn_df_temp)
+}
+
+# Filter and sort the results based on adjusted p-value
+filtered_sorted_dunn_results <- dunn_test_results_df %>% 
+  arrange(P.adj)
+
+# Print the filtered and sorted results
+print(filtered_sorted_dunn_results)
+
