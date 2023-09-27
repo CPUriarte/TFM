@@ -26,6 +26,8 @@ library(pheatmap)
 library(igraph)
 library(heatmaply)
 library(dplyr)
+library(magrittr)
+library(fields)
 
 ############################################ Loading and pre-processing ---------------------------------------------
 # Loading ----
