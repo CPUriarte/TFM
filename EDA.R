@@ -1,11 +1,14 @@
-############################################ LIBRARIES ----
-library(SPIAT)
+############################################ Overview ----
+# Title: Exploratory data analysis of advanced urothelial carcinoma samples segmented with DeepCell Mesmer and exported with QuPath.
+# Date: 20/05/2023
+# Author: Cyril P
+# Institution: University of Navarra
+############################################ Libraries ----
 library(tidyverse)
 library(gridExtra)
 library(plotly)
 library(BBmisc)
 library(stats)
-library(reshape2)
 library(readxl)
 library(car)
 library(moments)
@@ -17,14 +20,17 @@ library(ggsignif)
 library(corrplot)
 library(spatstat)
 library(igraph)
-############################################ LOADING DATA ----
+library(ggdist) # Applies genlog scale to ggplot values and colors
+############################################ Load data ----
+cat("\014")
+
 # Raw measurements exported from QuPath
 raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
 
 # Raw associated clinical data
 responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
 
-# PROCESSING ----
+############################################ Formatting ----
 # Treatment response dataset
 responses <- responses[, -c(4, 6:8)] # Eliminate unnecessary columns
 colnames(responses) <- c("ID", "Age", "Sex", "Response") # Set name to columns
@@ -69,82 +75,29 @@ responses$n_cells <- cell_count_vector
 # Dropping non-evaluable patients
 responses$Response <- droplevels(responses$Response, "Not evaluable/NE")
 levels(responses$Response) <- c("CR", "PR", "PD", "SD")
+SPIAT_tifs <- unique(eda_df$Image) # Unique list of SPIAT curated images
 
 # Clear intermediary variables
 rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector"))
 
-SPIAT_tifs <- unique(eda_df$Image)
-
-# Number of images per patient and TIF index
-tif_index <- eda_df %>%
-  group_by(ID) %>%
-  summarise(
-    Count = n_distinct(Image),
-    Images = list(unique(Image))
-  )
-
-tif_index$Matched_Indices <- sapply(tif_index$Images, function(images_list) which(SPIAT_tifs %in% images_list))
-
-############################################ EDA ----
-# Image retriever by ID ----
-ID <- 303 # Other interesting cases(1101, 502, 303) ----
-tif_index_retriever <- tif_index[tif_index$ID == ID, "Matched_Indices"][[1]]
-print(paste("SPIAT_tifs indexes for patient", ID, "are:", tif_index_retriever))
-############################################  SECTION 1 / Images and cells ----
+# Clear console for results
+cat("\014")
 summary(responses)
 summary(eda_df[,c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")])
 
-ggplot(tif_index, aes(x = as.factor(Count))) +
-  geom_bar(aes(fill = responses$Response[match(ID, responses$ID)])) +
-  labs(
-    title = "Distribution of Patients based on Number of Images and Treatment Response",
-    x = "Number of Images",
-    y = "Count of Patients",
-    fill = "Response to Treatment"
-  )
+############################################ S1 | Number of cells ----
+cat("\014")
 
-## 1.1. NUMBER OF CELLS
-# 2. NUMBER OF CELLS
-# VISUALS - Cells per img and ID (QQ-plots) ----
-# Number of cells per image (DENSITY)
-eda_df %>%
-  group_by(Image) %>%
-  tally() %>%
-  ggplot(aes(x = n)) +
-  geom_histogram(aes(y = ..density..), fill = "steelblue", color = "white", bins = 30) +
-  geom_density(aes(y = ..density..), color = "red") +
-  labs(title = "Distribution of Number of Cells per Image",
-       y = "Density",
-       x = "Number of Cells")
-
-result_dagostino <- eda_df %>% # Normality test (AGOSTINO PEARSON)
-  group_by(Image) %>%
-  summarise(cell_count = n()) %>%
-  {agostino.test(.$cell_count)}
-
-result_dagostino
-
-# Number of cells per image (QQplot)
+# Number of cells per image (QQPLOT)
 eda_df %>%
   group_by(Image) %>%
   summarise(cell_count = n()) %>%
   {qqPlot(.$cell_count, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main="Number of Cells per Image")}
 
-# Number of cells per patient (DENSITY)
-shapiro.test(responses$n_cells) # Normality test
-responses %>%
-  group_by(ID) %>%
-  ggplot(aes(x = n_cells)) +
-  geom_histogram(aes(y = ..density..), fill = "steelblue", color = "white", bins = 30) +
-  geom_density(aes(y = ..density..), color = "red") +
-  labs(title = "Distribution of Number of Cells per Patient",
-       y = "Density",
-       x = "Number of Cells")
-
-# Number of cells (QQplot)
+# Number of cells per ID (QQPLOT)
 qqPlot(responses$n_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
 
-############################################  SECTION 2 / Age ----
+############################################ S2 | Age ----
 age_stats <- list()
 age_stats$residuals <- residuals(aov(Age ~ Response, data=responses))
 shapiro.test(age_stats$residuals)
@@ -155,19 +108,6 @@ age_stats$levene$`Pr(>F)`[1]
 
 age_stats$aov <- aov(Age ~ Response, data=responses)
 
-summary(age_stats$aov)
-
-## 2.3. SEX (Explicado en papers) ----  # RARO
-binom.test(sum(responses$Sex == "Male"), nrow(responses), p = 0.3)
-ggplot(responses, aes(x = Sex)) +
-  geom_bar(fill = "#0072B2", color = "black") + 
-  labs(title = "Distribution of Sex", x = "Sex", y = "Count") +
-  theme_minimal()
-
-
-# 3. SEX
-# VISUALS - Age per ID (Barplot) ----
-# Overall age distribution
 responses %>%
   group_by(ID) %>%
   ggplot(aes(x = Age)) +
@@ -177,16 +117,22 @@ responses %>%
        x = "Age",
        y = "Count")
 
-# 2. AGE
-############################################  SECTION 3 / Sex ----
-# LaTeX: P(X=k) = \frac{\binom{N}{n} \binom{M}{k} \binom{N-M}{n-k}}{\binom{N}{n}}
-choose(31, 10) / choose(46, 10)
+cat("\014")
+summary(age_stats$aov)
 
+############################################ S3 | Sex ----
 # Fisher exact test
 age_fishertest <- fisher.test(table(responses$Sex, responses$Response))
+
+# Hypergeometric test - LaTeX: P(X=k) = \frac{\binom{N}{n} \binom{M}{k} \binom{N-M}{n-k}}{\binom{N}{n}}
+cat("\014")
+print("Probability of having 10 males in a group given female to male ratio is 1:3: \n")
+choose(31, 10) / choose(46, 10)
+
+print("Probability of having 10 males in a group given female to male ratio is 1:3 and all other distributions among groups:")
 age_fishertest$p.value
 
-############################################  SECTION 4 / Marker intensity ----
+############################################ S4 | Marker intensity ----
 eda_by_ID <- eda_df %>%
   group_by(ID) %>%
   summarise(
@@ -203,36 +149,24 @@ eda_by_ID <- eda_by_ID %>%
   mutate(Response = responses$Response[match(ID, responses$ID)]) %>%
   select(ID, Response, everything())
 
-# STATISTICS -  Shapiro, Levene, KW, Dunn ----
+# STATISTICS - Marker intensity comparison across response
+## KRUSKAL WALLIS TEST
 markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
-# Shapiro-Wilk
-shapiro_test_by_group <- function(marker) {
-  eda_by_ID %>%
-    group_by(Response) %>%
-    summarise(p_value = shapiro.test(get(marker))$p.value) %>%
-    mutate(marker = marker)
-}
-eda_mIntensity_shapiro_byID <- bind_rows(lapply(markers, shapiro_test_by_group))
-
-# Levene and KW test
 test_for_marker <- function(marker) {
-  
-  # Levene's test
-  levene_p_val <- leveneTest(get(marker) ~ Response, data = eda_by_ID)$`Pr(>F)`[1]
   
   # Kruskal-Wallis test
   kw_p_val <- kruskal.test(get(marker) ~ Response, data = eda_by_ID)$p.value
   
   # Return combined data frame
   return(data.frame(marker = marker, 
-                    levene_p_value = levene_p_val,
                     kw_p_value = kw_p_val))
 }
 
 # Run tests and bind results
-eda_mIntensity_levene_KWfdr <- bind_rows(lapply(markers, test_for_marker))
+mIntensity_KWresults <- bind_rows(lapply(markers, test_for_marker))
 
+## POST-HOC ANALYSIS WITH DUNN'S TEST
 # CD3 Dunn test
 dunn_results <- dunnTest(CD3 ~ Response, data = eda_by_ID, method = "bh")
 
@@ -254,15 +188,15 @@ ggplot(eda_mIntensity_dunn, aes(x = reorder(Comparison, -Z), y = Z)) +
        y = "Z-Score") +
   theme_minimal()
 
-eda_mIntensity_levene_KWfdr <- eda_mIntensity_levene_KWfdr %>%
+mIntensity_KWresults <- mIntensity_KWresults %>%
   arrange(kw_p_value)
-print(eda_mIntensity_levene_KWfdr)
+print(mIntensity_KWresults)
 
 eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
   arrange(P.adj)
 print(eda_mIntensity_dunn)
 
-# CD8 Dunn test
+## CD8 Dunn test
 dunn_results <- dunnTest(CD8 ~ Response, data = eda_by_ID, method = "bh")
 
 eda_mIntensity_dunn <- data.frame(
@@ -288,8 +222,8 @@ ggplot(eda_mIntensity_dunn, aes(x = reorder(Comparison, -Z), y = Z)) +
 
 print(eda_mIntensity_dunn)
 
-# VISUALS - Results ----
-# Correlation plot by ID
+# VISUAL - Graphical outputs
+## CORRELATION PLOT (Normalized by ID)
 combined_data <- merge(eda_df, responses, by = "ID")
 
 # Subset markers
@@ -302,7 +236,7 @@ correlation_matrix <- cor(subset_data, method = "spearman", use = "complete.obs"
 corrplot(correlation_matrix, type = "lower", method = "color", addCoef.col = 'black', tl.pos = 'd')
 corrplot(correlation_matrix, type = "upper", method = "ellipse", diag = F, tl.pos = 'n', cl.pos = 'n', add=T)
 
-# Network analysis
+## WEIGHTED NETWORK PLOT
 cor_matrix <- matrix(correlation_matrix, nrow=6, byrow=TRUE)
 
 rownames(cor_matrix) <- colnames(cor_matrix) <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
@@ -321,8 +255,8 @@ plot(g, vertex.label=V(g)$name,
      edge.width=(E(g)$weight - min(E(g)$weight)) * 50,
      vertex.color="firebrick3", edge.color='orange', vertex.label.color = "ivory")
 
+## RIDGELINE DENSITY PLOTS PER RESPONSE GROUP
 # Distribution of marker intensity accross patients per response groups
-# Pivoting eda_by_ID (consists of aggregated patients by median)
 long_eda_df <- eda_by_ID %>% 
   pivot_longer(cols = PD1:CK, names_to = "Marker", values_to = "Value")
 
@@ -338,8 +272,19 @@ ggplot(long_eda_df, aes(x = Value + shift_constant, y = Response, fill = Respons
   labs(title = "Log-scaled Density of Marker Intensities by Response") +
   theme_minimal()
 
-############################################ PHENOTYPING ATTEMPT ----
-# (Version 1) - Determining cutoff ----
+cat("\014")
+mIntensity_KWresults <- mIntensity_KWresults %>%
+  arrange(kw_p_value)
+print(mIntensity_KWresults)
+
+eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
+  arrange(P.adj)
+print(eda_mIntensity_dunn)
+
+print(eda_mIntensity_dunn)
+############################################ S5 | Predicting phenotypes ----
+cat("\014")
+# Automatic thresholding - Version 1 ----
 # Threshold dataset
 img_threshs <- eda_df %>% 
   dplyr::select(Image, ID) %>% 
@@ -410,7 +355,8 @@ merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
-# (Version 2) - Determining cutoff ----
+cat("\014")
+# Automatic thresholding - Version 2 ----
 img_threshs <- eda_df %>% 
   select(Image, ID) %>% 
   distinct() %>%
@@ -508,7 +454,8 @@ merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
-# PROCESSING - Applying cutoff ----
+# Processing ----
+## PROCESSING - Applying cutoff (Step 1/3)
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
 for(marker in immune_markers) {
@@ -516,9 +463,10 @@ for(marker in immune_markers) {
   merged_df[, marker] <- ifelse(merged_df[, marker] >= merged_df[, cutoff_col], 1, 0)
 }
 
-# PROCESSING - Handling superposition ---- 
+cat("\014")
+## PROCESSING - Handling superposition (Step 2/3)
 # Add a column for duplicate identification
-# CK adjustment
+# CK adjustments
 result <- pbapply(merged_df, 1, function(row) {
   
   # If CK is 1 and both CD3 and CD8 are 0, CK is left as 1.
@@ -555,11 +503,12 @@ final_df <- rbind.data.frame(original_rows, duplicate_rows)
 final_df <- final_df[, c("Image", "X", "Y", "ID", "DAPI", immune_markers)]
 final_df[,-1] <- lapply(final_df[,-1], as.numeric)
 
-# PROCESSING - Assigning phenotypes ----
+## PROCESSING - Assigning phenotypes (Step 3/3)
 # Immune_markers vector
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
-# Paste values
+# Assigning phenotypes
+cat("\014")
 phenotype_strings <- pbapply(final_df[, immune_markers], 1, function(row) {
   paste(names(row)[as.logical(row)], collapse = ",")
 }, cl = 4)
@@ -571,71 +520,45 @@ phenotype_strings[phenotype_strings == ""] <- "Undefined"
 # Add phenotype column to the dataframe
 final_df$Phenotype <- phenotype_strings
 
-random <- function() {
-  return(sample(1:90, 1))
-}
-
-# Remove intermediate variables to clear memory
-rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, phenotype_strings)
-
-# VISUALS - Predicted phenotypes (Dotplot) ----
-selected_image <- SPIAT_tifs[random()] # 1 to 90 possible images ----
-selected_image <- SPIAT_tifs[65] # Select a specific image
 # Join final_df and responses
 final_df_joined <- final_df %>%
   left_join(responses, by = "ID")
 
+# Remove intermediate variables
+rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, phenotype_strings)
+cat("\014")
+# Sample image with predicted phenotypes ----
+IMG <- sample(SPIAT_tifs, size = 1)
+
 p <- final_df_joined %>%
-  filter(Image == selected_image) %>%
+  filter(Image == IMG) %>%
   ggplot(aes(x = X, y = Y, color = Phenotype)) +
   geom_point(alpha = 0.7) +
-  labs(
-    title = paste(
-      selected_image,
-      "(", first(unique(final_df_joined$Response[final_df_joined$Image == 1])), ")",
-      sep = " "
-    ),
-    x = "X coordinate",
-    y = "Y coordinate"
-  ) +
+  labs(title = paste(IMG, "|", unique(final_df_joined$Response[final_df_joined$Image==IMG])), x  = "X coordinate", y = "Y coordinate") +
   theme_minimal() +
   scale_color_discrete(name = "Phenotypes") +
   coord_cartesian(xlim = c(0, 1300), ylim = c(0, 1300))
 
 ggplotly(p)
 
-# VISUALS - Cutoff quality (IMAGES) ----
-
-long_eda_df <- eda_df[eda_df$Image == selected_image, ] %>%
+## VISUAL - Cutoff quality (IMAGES)
+long_eda_df <- eda_df[eda_df$Image == IMG, ] %>%
   pivot_longer(cols = colnames(eda_df[, 6:11]), names_to = "marker", values_to = "intensity")
 
 long_eda_df$cutoff <- sapply(1:nrow(long_eda_df), function(i) {
-  img_threshs[img_threshs$Image == selected_image, paste0("cutoff_", long_eda_df$marker[i])]
+  img_threshs[img_threshs$Image == IMG, paste0("cutoff_", long_eda_df$marker[i])]
 })
 
 long_eda_df$cutoff <- as.numeric(long_eda_df$cutoff)
 
-ggplot(long_eda_df, aes(x = intensity)) +
-  geom_density(fill = "aquamarine") +
-  geom_vline(aes(xintercept = cutoff), color = "red", linetype = "dashed") +
-  labs(title = paste("Density distribution of markers for", selected_image),
-       subtitle = paste("Cutoff values are displayed as red dashed lines"),
-       x = "Intensity",
-       y = "Density") +
+ggplot(long_eda_df, aes(x = log(intensity+1))) +
+  geom_density(fill = "cyan") +
+  geom_vline(aes(xintercept = cutoff), color = "firebrick3", linetype = "dashed") +
+  labs(title = paste("Density distribution of markers for", IMG)) +
   facet_wrap(~marker, scales = "free") +
   theme_minimal()
 
-# Marker intensity dotplot
-eda_df %>%
-  filter(Image == selected_image) %>%
-  ggplot(aes(x=X, y=Y, color=CK)) +
-  geom_point(alpha=0.6) +
-  scale_color_gradientn(n.breaks = 3, colors = terrain.colors(93)) +
-  coord_cartesian(xlim=c(0, 1300), ylim=c(0, 1300)) +
-  theme_minimal()
-
-
-# VISUALS - Phenotype proportion per response group (Stacked Barplot) ----
+# Resulting phenotype proportions ----
 # Median Proportion of Phenotypes per Response Group (PATIENTS)
 # Step 1: Get unique phenotypes across all images
 cp_unique_phenos <- unique(final_df$Phenotype)
@@ -707,17 +630,16 @@ for(i in 1:nrow(cp_pheno_counts)) {
 }
 
 # FINAL RESHAPE
-# Step 1: Reshape the data
 cp_long_format <- cp_pheno_counts %>%
   select(-Image) %>%
   gather(key = 'cp_Phenotype', value = 'cp_Count', -ID, -Response)
 
-# Group the data by ID and then summarize the counts
+# Group data by ID summarize counts
 cp_total_cells_per_ID <- cp_long_format %>%
   group_by(ID) %>%
   summarise(cp_TotalCells = sum(cp_Count, na.rm = TRUE))
 
-# Create Long Data with Proportions
+# Long Data with Proportions
 cp_long_with_props <- cp_long_format %>%
   group_by(ID, cp_Phenotype) %>%
   summarise(cp_PhenotypeCount = sum(cp_Count, na.rm = TRUE)) %>%
@@ -761,90 +683,39 @@ cp_plot <- ggplot(cp_aggregated_pheno, aes(x = cp_Response, y = cp_GroupProp, fi
 
 # Create interactive plot
 ggplotly(cp_plot)
+cat("\014")
 
-# SESSION INFO ----
+############################################  Session info ----
 # R version 4.2.2 (2022-10-31 ucrt)
 # Platform: x86_64-w64-mingw32/x64 (64-bit)
 # Running under: Windows 10 x64 (build 22621)
 # 
 # Matrix products: default
 # 
-# locale:
-# [1] LC_COLLATE=English_United States.utf8  LC_CTYPE=English_United States.utf8   
-# [3] LC_MONETARY=English_United States.utf8 LC_NUMERIC=C                          
-# [5] LC_TIME=English_United States.utf8    
+# Locale:
+# [1] LC_COLLATE=English_United States.utf8  LC_CTYPE=English_United States.utf8    LC_MONETARY=English_United States.utf8
+# [4] LC_NUMERIC=C                           LC_TIME=English_United States.utf8    
 # 
-# attached base packages:
-# [1] stats4    stats     graphics  grDevices utils     datasets  methods  
-# [8] base     
+# Attached base packages:
+# [1] stats     graphics  grDevices utils     datasets  methods   base     
 # 
-# other attached packages:
-# [1] igraph_1.5.1                spatstat_3.0-6             
-# [3] spatstat.linnet_3.1-1       spatstat.model_3.2-4       
-# [5] rpart_4.1.19                spatstat.explore_3.2-1     
-# [7] nlme_3.1-162                spatstat.random_3.1-5      
-# [9] spatstat.geom_3.2-1         spatstat.data_3.0-1        
-# [11] corrplot_0.92               ggsignif_0.6.4             
-# [13] FSA_0.9.4                   ggridges_0.5.4             
-# [15] pbapply_1.7-0               moments_0.14.1             
-# [17] car_3.1-2                   carData_3.0-5              
-# [19] readxl_1.4.2                reshape2_1.4.4             
-# [21] BBmisc_1.13                 plotly_4.10.2              
-# [23] gridExtra_2.3               lubridate_1.9.2            
-# [25] forcats_1.0.0               stringr_1.5.0              
-# [27] dplyr_1.1.2                 purrr_1.0.1                
-# [29] readr_2.1.4                 tidyr_1.3.0                
-# [31] tibble_3.2.1                ggplot2_3.4.3              
-# [33] tidyverse_2.0.0             SPIAT_1.0.4                
-# [35] SpatialExperiment_1.8.1     SingleCellExperiment_1.20.1
-# [37] SummarizedExperiment_1.28.0 Biobase_2.58.0             
-# [39] GenomicRanges_1.50.2        GenomeInfoDb_1.34.9        
-# [41] IRanges_2.32.0              S4Vectors_0.36.2           
-# [43] BiocGenerics_0.44.0         MatrixGenerics_1.10.0      
-# [45] matrixStats_0.63.0         
+# Other attached packages:
+# [1] ggdist_3.3.0           igraph_1.5.1           spatstat_3.0-6         spatstat.linnet_3.1-1  spatstat.model_3.2-4   rpart_4.1.19          
+# [7] spatstat.explore_3.2-1 nlme_3.1-162           spatstat.random_3.1-5  spatstat.geom_3.2-1    spatstat.data_3.0-1    corrplot_0.92         
+# [13] ggsignif_0.6.4         FSA_0.9.4              ggridges_0.5.4         pbapply_1.7-0          reshape2_1.4.4         moments_0.14.1        
+# [19] car_3.1-2              carData_3.0-5          readxl_1.4.2           BBmisc_1.13            plotly_4.10.2          gridExtra_2.3         
+# [25] lubridate_1.9.2        forcats_1.0.0          stringr_1.5.0          dplyr_1.1.2            purrr_1.0.1            readr_2.1.4           
+# [31] tidyr_1.3.0            tibble_3.2.1           ggplot2_3.4.3          tidyverse_2.0.0       
 # 
-# loaded via a namespace (and not attached):
-# [1] colorspace_2.1-0          rjson_0.2.21             
-# [3] deldir_1.0-9              ellipsis_0.3.2           
-# [5] scuttle_1.8.4             XVector_0.38.0           
-# [7] rstudioapi_0.14           farver_2.1.1             
-# [9] scico_1.5.0               fansi_1.0.4              
-# [11] splines_4.2.2             codetools_0.2-19         
-# [13] R.methodsS3_1.8.2         sparseMatrixStats_1.10.0 
-# [15] dunn.test_1.3.5           polyclip_1.10-4          
-# [17] jsonlite_1.8.4            R.oo_1.25.0              
-# [19] HDF5Array_1.26.0          spatstat.sparse_3.0-1    
-# [21] compiler_4.2.2            httr_1.4.6               
-# [23] dqrng_0.3.0               backports_1.4.1          
-# [25] Matrix_1.5-4.1            fastmap_1.1.1            
-# [27] lazyeval_0.2.2            limma_3.54.2             
-# [29] cli_3.6.1                 htmltools_0.5.6          
-# [31] tools_4.2.2               gtable_0.3.4             
-# [33] glue_1.6.2                GenomeInfoDbData_1.2.9   
-# [35] Rcpp_1.0.10               cellranger_1.1.0         
-# [37] vctrs_0.6.3               rhdf5filters_1.10.1      
-# [39] crosstalk_1.2.0           DelayedMatrixStats_1.20.0
-# [41] beachmat_2.14.2           timechange_0.2.0         
-# [43] lifecycle_1.0.3           goftest_1.2-3            
-# [45] edgeR_3.40.2              zlibbioc_1.44.0          
-# [47] scales_1.2.1              hms_1.1.3                
-# [49] spatstat.utils_3.0-3      parallel_4.2.2           
-# [51] rhdf5_2.42.1              yaml_2.3.7               
-# [53] stringi_1.7.12            checkmate_2.2.0          
-# [55] BiocParallel_1.32.6       rlang_1.1.1              
-# [57] pkgconfig_2.0.3           bitops_1.0-7             
-# [59] pracma_2.4.2              lattice_0.20-45          
-# [61] tensor_1.5                Rhdf5lib_1.20.0          
-# [63] labeling_0.4.2            htmlwidgets_1.6.2        
-# [65] tidyselect_1.2.0          plyr_1.8.8               
-# [67] magrittr_2.0.3            R6_2.5.1                 
-# [69] magick_2.7.4              generics_0.1.3           
-# [71] DelayedArray_0.23.2       mgcv_1.8-42              
-# [73] pillar_1.9.0              withr_2.5.0              
-# [75] abind_1.4-5               RCurl_1.98-1.12          
-# [77] crayon_1.5.2              DropletUtils_1.18.1      
-# [79] utf8_1.2.3                tzdb_0.4.0               
-# [81] locfit_1.5-9.7            grid_4.2.2               
-# [83] data.table_1.14.8         digest_0.6.33            
-# [85] R.utils_2.12.2            munsell_0.5.0            
-# [87] viridisLite_0.4.2
+# Loaded via a namespace (and not attached):
+# [1] httr_1.4.6            jsonlite_1.8.4        viridisLite_0.4.2     splines_4.2.2         distributional_0.3.2  cellranger_1.1.0     
+# [7] yaml_2.3.7            pillar_1.9.0          backports_1.4.1       lattice_0.20-45       glue_1.6.2            digest_0.6.33        
+# [13] polyclip_1.10-4       checkmate_2.2.0       colorspace_2.1-0      htmltools_0.5.6       Matrix_1.5-4.1        plyr_1.8.8           
+# [19] spatstat.sparse_3.0-1 pkgconfig_2.0.3       scales_1.2.1          tensor_1.5            spatstat.utils_3.0-3  tzdb_0.4.0           
+# [25] pracma_2.4.2          timechange_0.2.0      mgcv_1.8-42           farver_2.1.1          generics_0.1.3        ellipsis_0.3.2       
+# [31] withr_2.5.0           lazyeval_0.2.2        cli_3.6.1             crayon_1.5.2          magrittr_2.0.3        deldir_1.0-9         
+# [37] fansi_1.0.4           dunn.test_1.3.5       tools_4.2.2           data.table_1.14.8     hms_1.1.3             lifecycle_1.0.3      
+# [43] munsell_0.5.0         compiler_4.2.2        rlang_1.1.1           grid_4.2.2            rstudioapi_0.14       htmlwidgets_1.6.2    
+# [49] goftest_1.2-3         crosstalk_1.2.0       labeling_0.4.2        gtable_0.3.4          abind_1.4-5           R6_2.5.1             
+# [55] fastmap_1.1.1         utf8_1.2.3            stringi_1.7.12        parallel_4.2.2        Rcpp_1.0.10           vctrs_0.6.3          
+# [61] tidyselect_1.2.0 
