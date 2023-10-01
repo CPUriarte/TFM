@@ -684,7 +684,10 @@ cp_plot <- ggplot(cp_aggregated_pheno, aes(x = cp_Response, y = cp_GroupProp, fi
 # Create interactive plot
 ggplotly(cp_plot)
 cat("\014")
+<<<<<<< HEAD
 
+=======
+>>>>>>> 3d2b2650603c855b09e2c6e46386cb96dfe08312
 ############################################  Session info ----
 # R version 4.2.2 (2022-10-31 ucrt)
 # Platform: x86_64-w64-mingw32/x64 (64-bit)
