@@ -282,7 +282,7 @@ eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
 print(eda_mIntensity_dunn)
 
 print(eda_mIntensity_dunn)
-############################################ S5 | Predicting phenotypes ----
+############################################ S5 | Custom phenotype prediction ----
 cat("\014")
 # Automatic thresholding - Version 1 ----
 # Threshold dataset
