@@ -1,10 +1,10 @@
-############################################ Overview ----
+# Overview ----
 # Title: Exploratory data analysis of advanced urothelial carcinoma samples segmented with DeepCell Mesmer and exported with QuPath.
 # Date: 20/05/2023
 # Author: Cyril P
 # Director: Carlos de Andrea
 # Institution: University of Navarra
-############################################ Libraries ----
+# Libraries ----
 library(tidyverse)
 library(gridExtra)
 library(plotly)
@@ -22,7 +22,7 @@ library(corrplot)
 library(spatstat)
 library(igraph)
 library(ggdist) # Applies genlog scale to ggplot values and colors
-############################################ Load data ----
+# Load data ----
 cat("\014")
 
 # Raw measurements exported from QuPath
@@ -31,7 +31,7 @@ raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep =
 # Raw associated clinical data
 responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
 
-############################################ Formatting ----
+# Formatting ----
 # Treatment response dataset
 responses <- responses[, -c(4, 6:8)] # Eliminate unnecessary columns
 colnames(responses) <- c("ID", "Age", "Sex", "Response") # Set name to columns
@@ -86,7 +86,7 @@ cat("\014")
 summary(responses)
 summary(eda_df[,c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")])
 
-############################################ S1 | Number of cells ----
+# S1 | Number of cells ----
 cat("\014")
 
 # Number of cells per image (QQPLOT)
@@ -98,7 +98,7 @@ eda_df %>%
 # Number of cells per ID (QQPLOT)
 qqPlot(responses$n_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
 
-############################################ S2 | Age ----
+# S2 | Age ----
 age_stats <- list()
 age_stats$residuals <- residuals(aov(Age ~ Response, data=responses))
 shapiro.test(age_stats$residuals)
@@ -121,7 +121,7 @@ responses %>%
 cat("\014")
 summary(age_stats$aov)
 
-############################################ S3 | Sex ----
+# S3 | Sex ----
 # Fisher exact test
 age_fishertest <- fisher.test(table(responses$Sex, responses$Response))
 
@@ -133,7 +133,7 @@ choose(31, 10) / choose(46, 10)
 print("Probability of having 10 males in a group given female to male ratio is 1:3 and all other distributions among groups:")
 age_fishertest$p.value
 
-############################################ S4 | Marker intensity ----
+# S4 | Marker intensity ----
 eda_by_ID <- eda_df %>%
   group_by(ID) %>%
   summarise(
@@ -283,9 +283,9 @@ eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
 print(eda_mIntensity_dunn)
 
 print(eda_mIntensity_dunn)
-############################################ S5 | Custom phenotype prediction ----
+# S5 | Custom phenotype prediction ----
 cat("\014")
-# Automatic thresholding - Version 1 ----
+## Automatic thresholding - V1 ----
 # Threshold dataset
 img_threshs <- eda_df %>% 
   dplyr::select(Image, ID) %>% 
@@ -357,7 +357,7 @@ names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
 cat("\014")
-# Automatic thresholding - Version 2 ----
+## Automatic thresholding - V2 ----
 img_threshs <- eda_df %>% 
   select(Image, ID) %>% 
   distinct() %>%
@@ -455,7 +455,7 @@ merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
-# Processing ----
+## Phenotype assignment ----
 ## PROCESSING - Applying cutoff (Step 1/3)
 immune_markers <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
 
@@ -528,7 +528,7 @@ final_df_joined <- final_df %>%
 # Remove intermediate variables
 rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, phenotype_strings)
 cat("\014")
-# Sample image with predicted phenotypes ----
+## Sample image with predicted phenotypes ----
 IMG <- sample(SPIAT_tifs, size = 1)
 
 p <- final_df_joined %>%
@@ -559,7 +559,7 @@ ggplot(long_eda_df, aes(x = log(intensity+1))) +
   facet_wrap(~marker, scales = "free") +
   theme_minimal()
 
-# Resulting phenotype proportions ----
+## Resulting phenotype proportions ----
 # Median Proportion of Phenotypes per Response Group (PATIENTS)
 # Step 1: Get unique phenotypes across all images
 cp_unique_phenos <- unique(final_df$Phenotype)
@@ -685,7 +685,7 @@ cp_plot <- ggplot(cp_aggregated_pheno, aes(x = cp_Response, y = cp_GroupProp, fi
 # Create interactive plot
 ggplotly(cp_plot)
 cat("\014")
-############################################  Session info ----
+# S6 | Session info ----
 # R version 4.2.2 (2022-10-31 ucrt)
 # Platform: x86_64-w64-mingw32/x64 (64-bit)
 # Running under: Windows 10 x64 (build 22621)
