@@ -2,6 +2,7 @@
 # Title: Exploratory data analysis of advanced urothelial carcinoma samples segmented with DeepCell Mesmer and exported with QuPath.
 # Date: 20/05/2023
 # Author: Cyril P
+# Director: Carlos de Andrea
 # Institution: University of Navarra
 ############################################ Libraries ----
 library(tidyverse)
@@ -684,7 +685,6 @@ cp_plot <- ggplot(cp_aggregated_pheno, aes(x = cp_Response, y = cp_GroupProp, fi
 # Create interactive plot
 ggplotly(cp_plot)
 cat("\014")
-
 ############################################  Session info ----
 # R version 4.2.2 (2022-10-31 ucrt)
 # Platform: x86_64-w64-mingw32/x64 (64-bit)
