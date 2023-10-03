@@ -22,6 +22,7 @@ library(corrplot)
 library(spatstat)
 library(igraph)
 library(ggdist) # Applies genlog scale to ggplot values and colors
+library(yarrr) # Pirate plots
 # Load data ----
 cat("\014")
 
@@ -169,123 +170,81 @@ mIntensity_KWresults <- bind_rows(lapply(markers, test_for_marker))
 
 ## POST-HOC ANALYSIS WITH DUNN'S TEST
 # CD3 Dunn test
-dunn_results <- dunnTest(CD3 ~ Response, data = eda_by_ID, method = "bh")
+CD3_dun <- dunnTest(CD3 ~ Response, data = eda_by_ID, method = "bh")
 
-eda_mIntensity_dunn <- data.frame(
-  Comparison = dunn_results$res$Comparison,
-  Z = dunn_results$res$Z,
-  P.unadj = dunn_results$res$`P.unadj`,
-  P.adj = dunn_results$res$`P.adj`
+CD3_mIntensity_dunn <- data.frame(
+  Comparison = CD3_dun$res$Comparison,
+  Z = CD3_dun$res$Z,
+  P.unadj = CD3_dun$res$`P.unadj`,
+  P.adj = CD3_dun$res$`P.adj`
 )
-
-ggplot(eda_mIntensity_dunn, aes(x = reorder(Comparison, -Z), y = Z)) +
-  geom_bar(stat = "identity", aes(fill = P.adj <= 0.05)) + 
-  geom_text(aes(label = sprintf("%.2f", P.adj)), vjust = -0.5) +
-  scale_fill_manual(values = c("red", "gray"), 
-                    name = "Significance", 
-                    labels = c("p <= 0.05", "p > 0.05")) +
-  labs(title = "Dunn's Test Results for CD3",
-       x = "Group Comparison",
-       y = "Z-Score") +
-  theme_minimal()
-
-mIntensity_KWresults <- mIntensity_KWresults %>%
-  arrange(kw_p_value)
-print(mIntensity_KWresults)
-
-eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
-  arrange(P.adj)
-print(eda_mIntensity_dunn)
 
 ## CD8 Dunn test
-dunn_results <- dunnTest(CD8 ~ Response, data = eda_by_ID, method = "bh")
+CD8_dun <- dunnTest(CD8 ~ Response, data = eda_by_ID, method = "bh")
 
-eda_mIntensity_dunn <- data.frame(
-  Comparison = dunn_results$res$Comparison,
-  Z = dunn_results$res$Z,
-  P.unadj = dunn_results$res$`P.unadj`,
-  P.adj = dunn_results$res$`P.adj`
+CD8_mIntensity_dunn <- data.frame(
+  Comparison = CD8_dun$res$Comparison,
+  Z = CD8_dun$res$Z,
+  P.unadj = CD8_dun$res$`P.unadj`,
+  P.adj = CD8_dun$res$`P.adj`
 )
 
-eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
+CD8_mIntensity_dunn <- CD8_mIntensity_dunn %>%
   arrange(P.adj)
 
-ggplot(eda_mIntensity_dunn, aes(x = reorder(Comparison, -Z), y = Z)) +
-  geom_bar(stat = "identity", aes(fill = P.adj <= 0.05)) + 
-  geom_text(aes(label = sprintf("%.2f", P.adj)), vjust = -0.5) +
-  scale_fill_manual(values = c("red", "gray"), 
-                    name = "Significance", 
-                    labels = c("p <= 0.05", "p > 0.05")) +
-  labs(title = "Dunn's Test Results for CD8",
-       x = "Group Comparison",
-       y = "Z-Score") +
-  theme_minimal()
+# Violin plots
+cd3_plot <- ggplot(eda_by_ID, aes(x=Response, y=CD3)) +
+  geom_violin() +
+  stat_summary(fun.y=median, geom="point", size=3, color="red") +
+  geom_signif(comparisons = list(c("PD", "PR")), annotations = "**", y_position = c(0.75), size = 1.15) +
+  geom_signif(comparisons = list(c("PR", "SD")), annotations = "*", y_position = c(1.05), size = 1.15) +
+  theme_classic()
 
-print(eda_mIntensity_dunn)
+cd8_plot <- ggplot(eda_by_ID, aes(x=Response, y=CD8)) +
+  geom_violin() +
+  stat_summary(fun.y=median, geom="point", size=3, color="red") +
+  geom_signif(comparisons = list(c("PD", "PR")), annotations = "*", y_position = c(0.4), size = 1.15) +
+  theme_classic()
 
-# VISUAL - Graphical outputs
-## CORRELATION PLOT (Normalized by ID)
-combined_data <- merge(eda_df, responses, by = "ID")
-
-# Subset markers
-subset_data <- combined_data[, c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")]
-
-# Compute with spearman's
-correlation_matrix <- cor(subset_data, method = "spearman", use = "complete.obs")
-
-# Correlation matrix
-corrplot(correlation_matrix, type = "lower", method = "color", addCoef.col = 'black', tl.pos = 'd')
-corrplot(correlation_matrix, type = "upper", method = "ellipse", diag = F, tl.pos = 'n', cl.pos = 'n', add=T)
-
-## WEIGHTED NETWORK PLOT
-cor_matrix <- matrix(correlation_matrix, nrow=6, byrow=TRUE)
-
-rownames(cor_matrix) <- colnames(cor_matrix) <- c("PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
-
-# Create list on arbitrary treshold
-edges <- which(abs(cor_matrix) > 0.5 & upper.tri(cor_matrix), arr.ind = TRUE)
-edge_list <- data.frame(from = rownames(cor_matrix)[edges[, 1]], 
-                        to = rownames(cor_matrix)[edges[, 2]], 
-                        weight = abs(cor_matrix[edges]))
-
-g <- graph_from_data_frame(edge_list, directed = FALSE)
-
-# Plot graph with scaled edge width
-plot(g, vertex.label=V(g)$name,
-     vertex.size=30,
-     edge.width=(E(g)$weight - min(E(g)$weight)) * 50,
-     vertex.color="firebrick3", edge.color='orange', vertex.label.color = "ivory")
-
-## RIDGELINE DENSITY PLOTS PER RESPONSE GROUP
-# Distribution of marker intensity accross patients per response groups
-long_eda_df <- eda_by_ID %>% 
-  pivot_longer(cols = PD1:CK, names_to = "Marker", values_to = "Value")
-
-long_eda_df <- left_join(long_eda_df, responses[,1:3], by = "ID")
-
-# Log-scaled
-shift_constant <- 0.01
-
-ggplot(long_eda_df, aes(x = Value + shift_constant, y = Response, fill = Response)) +
-  geom_density_ridges2(alpha = 0.5) +
-  facet_wrap(~ Marker, scales = "free_x") +
-  scale_x_log10() +
-  labs(title = "Log-scaled Density of Marker Intensities by Response") +
-  theme_minimal()
+combined_plot <- cowplot::plot_grid(cd3_plot, cd8_plot, ncol = 2)
+print(combined_plot)
 
 cat("\014")
-mIntensity_KWresults <- mIntensity_KWresults %>%
-  arrange(kw_p_value)
-print(mIntensity_KWresults)
-
-eda_mIntensity_dunn <- eda_mIntensity_dunn %>%
+CD3_mIntensity_dunn %>%
+  filter(P.adj <= 0.05) %>% 
   arrange(P.adj)
-print(eda_mIntensity_dunn)
 
-print(eda_mIntensity_dunn)
+CD8_mIntensity_dunn %>%
+  filter(P.adj <= 0.05) %>% 
+  arrange(P.adj)
+
+## Z-score plot
+# Filter significant results from Dunn's test for CD3 and CD8
+sig_CD3_dunn <- CD3_mIntensity_dunn %>%
+  filter(P.adj <= 0.05) %>% 
+  arrange(P.adj)
+
+sig_CD8_dunn <- CD8_mIntensity_dunn %>%
+  filter(P.adj <= 0.05) %>% 
+  arrange(P.adj)
+
+# Combine significant results into a single dataframe
+sig_dunn_combined <- bind_rows(
+  mutate(sig_CD3_dunn, marker = "CD3"),
+  mutate(sig_CD8_dunn, marker = "CD8")
+)
+
+# Plotting Z-scores from significant results
+zscore_plot <- ggplot(sig_dunn_combined, aes(x = Comparison, y = Z, color = marker, shape = marker)) +
+  geom_point(size = 4) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  theme_classic()
+
+print(zscore_plot)
+
 # S5 | Custom phenotype prediction ----
 cat("\014")
-## Automatic thresholding - V1 ----
+## Thresholding - V1 ----
 # Threshold dataset
 img_threshs <- eda_df %>% 
   dplyr::select(Image, ID) %>% 
@@ -357,7 +316,7 @@ names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
 cat("\014")
-## Automatic thresholding - V2 ----
+## Thresholding - V2 ----
 img_threshs <- eda_df %>% 
   select(Image, ID) %>% 
   distinct() %>%
@@ -685,7 +644,7 @@ cp_plot <- ggplot(cp_aggregated_pheno, aes(x = cp_Response, y = cp_GroupProp, fi
 # Create interactive plot
 ggplotly(cp_plot)
 cat("\014")
-# S6 | Session info ----
+# Session info ----
 # R version 4.2.2 (2022-10-31 ucrt)
 # Platform: x86_64-w64-mingw32/x64 (64-bit)
 # Running under: Windows 10 x64 (build 22621)
