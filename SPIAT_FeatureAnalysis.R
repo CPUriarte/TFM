@@ -1,8 +1,7 @@
-# Libraries ----
+############################################ Libraries ----
 library(gridExtra)
 library(BBmisc)
 library(stats)
-library(reshape2)
 library(readxl)
 library(car)
 library(moments)
@@ -28,15 +27,16 @@ library(heatmaply)
 library(dplyr)
 library(magrittr)
 library(fields)
+library(viridis)
 
-############################################ Loading and pre-processing ---------------------------------------------
-# Loading ----
+############################################ Loading ----
 # Raw measurements exported from QuPath
 raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
 
 # Clinical data
 responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
-# Formatting ----
+
+## Formatting
 # Treatment response dataset
 responses <- responses[, -c(4, 6:8)] # Eliminate unnecessary columns
 colnames(responses) <- c("ID", "Age", "Sex", "Response") # Set name to columns
@@ -102,7 +102,7 @@ levels(responses$Response) <- c("CR", "PR", "PD", "SD")
 
 # Cleaning memory
 suppressWarnings(rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector")))
-
+cat("\014")
 ############################################ SPIAT ----
 # 1. Create a spatial object ----
 # Select image subset
@@ -153,7 +153,7 @@ predicted_image <- predict_phenotypes(
   reference_phenotypes = FALSE,
   plot_distribution = TRUE)
 
-# 1. Quality control and visualization ----
+# 2. Quality control and visualization ----
 # Boxplot of marker intensities
 marker_names <- predicted_image@rowRanges@partitioning@NAMES
 marker_names <- marker_names[marker_names != "DAPI"]
@@ -264,7 +264,7 @@ ggplotly(p)
 marker_names <- c("PD1",  "LAG3", "CK")
 marker_surface_plot_stack(predicted_image, num_splits=50, marker_names)
 
-# 2. Basic analyses ----
+# 3. Basic analyses ----
 # Cell percentages
 p_cells <- calculate_cell_proportions(predicted_image, 
                                       reference_celltypes = NULL, 
@@ -307,7 +307,7 @@ min_summary_dist
 
 plot_distance_heatmap(phenotype_distances_result = min_summary_dist, metric = "mean")
 
-# 3. Quantifying cell co-localisation ----
+# 4. Quantifying cell co-localisation ----
 # Cells in Neighbourhood (CIN)
 average_percentage_of_cells_within_radius(spe_object = cleaned_image, 
                                           reference_celltype = "Tumour", 
@@ -359,7 +359,7 @@ for (marker in marker_names) {
 AUC_of_cross_function(df_cross) # Mixed
 crossing_of_crossK(df_cross) # Ring
 
-# 4. Spatial heterogeneity ----
+# 5. Spatial heterogeneity ----
 # Localised enthropy
 calculate_entropy(formatted_image, 
                   cell_types_of_interest = c("PanExhaust","ExhaustedLAG3"), 
@@ -399,7 +399,7 @@ gradient_results <- entropy_gradient_aggregated(formatted_image,
 plot(1:10,gradient_results$gradient_df[1, 3:12])
 
 
-# 5. Characterising tissue structures ----
+# 6. Characterising tissue structures ----
 # Determining whether there is a clear tumour margin
 R_BC(formatted_image, cell_type_of_interest = "Tumour", "Cell.Type")
 
@@ -436,7 +436,7 @@ immune_distances <- calculate_summary_distances_of_cells_to_borders(
 
 immune_distances
 
-# 6. Cellular neighborhood (CIN) ----
+# 7. Cellular neighborhood (CIN) ----
 # Cellular neighborhood
 average_minimum_distance(formatted_image)
 
@@ -467,8 +467,8 @@ average_nearest_neighbor_index(
   feature_colname="Cell.Type", 
   p_val = 0.05)
 
-########################################### F1 - Predicted phenotypes -----
-# EXTRACT - Extraction and formatting ----
+############################################ F1 | Predicted phenotypes -----
+## PROCESS - Extraction and formatting
 spiat_predicted_phenotypes <- list()
 
 # Custom extraction function
@@ -605,7 +605,7 @@ final_order <- c("Image","ID", "Response", "None", "CK", ordered_cols)
 # Re-arrange columns (final order)
 spiat_pheno_counts <- spiat_pheno_counts[, final_order]
 
-# PROCESS - Convert to proportions ----
+## PROCESS - Convert to proportions
 # Reshape data
 spiat_long_format <- spiat_pheno_counts %>%
   select(-Image) %>%
@@ -712,7 +712,7 @@ for (pheno in spiat_phenoKWfdr$Phenotype[spiat_phenoKWfdr$p.value < 0.05]) {
   spiat_pheno_dunn <- rbind(spiat_pheno_dunn, dunn_df)
 }
 
-# VISUALS - Relative phenotype proportion per patient (Barplot) ----
+## VISUALS - Relative phenotype proportion per patient (Barplot)
 # Merge datasets
 merged_data <- merge(spiat_long_with_props, responses[, c("ID", "Response")], by = "ID")
 
@@ -733,7 +733,7 @@ gg <- ggplot(merged_data, aes(x=factor(ID), y=spiat_Prop, fill=spiat_Phenotype))
 
 gg
 
-# VISUALS - Relative phenotype proportion per response group (Barplot) ----
+## VISUALS - Relative phenotype proportion per response group (Barplot)
 spiat_plot <- ggplot(spiat_aggregated_pheno, aes(x = spiat_Response, y = spiat_GroupProp, fill = spiat_Phenotype)) +
   geom_bar(stat = "identity") +
   coord_flip() +
@@ -756,10 +756,7 @@ suppressWarnings(
 
 # Clean everything in the console
 cat("\014")
-
-print("Intermediary variables have been supressed to maintain clarity, please refer to each section of the code in order to retrieve a specific variable")
-
-# STATS - KW comparison & post-hoc ----
+## STATS - KW comparison & post-hoc print
 print(
   spiat_phenoKWfdr %>% 
     filter(p.value <= 0.05) %>% 
@@ -771,8 +768,9 @@ print(
     filter(P.adj <= 0.05) %>% 
     arrange(P.adj)
 )
-########################################### F2 - Scatterplots -----
-# EXTRACT - Extract scatterplots ----
+# Lacks updating results to be finished ----
+############################################ F2 | Scatterplots -----
+## PROCESS - Extract scatterplots
 spiat_scattercount <- list()
 
 # Extraction function
@@ -884,9 +882,10 @@ spiat_scattercount <- pblapply(spiat_scattercount, function(x) {
   
   return(x)
 })
+cat("\014")
 
 nq <- 15 # Select n of quadrats (<90) ----
-# PROCESS - Creates PPP, density maps and quadrats ---- 
+## PROCESS - Creates PPP, density maps and quadrats
 # Generate standardized window of observation
 allX_list <- lapply(spiat_scattercount, function(x) x$X)
 allY_list <- lapply(spiat_scattercount, function(x) x$Y)
@@ -916,7 +915,7 @@ names(density_maps) <- names(spiat_scattercount)
 names(qtest_results) <- names(spiat_scattercount)
 names(quadrats) <- names(spiat_scattercount)
 
-# Most important line, does all plots and tests
+## Most important line, does all plots and tests
 for (image_name in names(spiat_scattercount)) {
   
   # Subset image from list
@@ -997,9 +996,11 @@ for (image_name in names(spiat_scattercount)) {
   
 }
 
+cat("\014")
 print(skipped_images)
+readline(prompt=paste(cat("\014"), "Press enter to continue the execution."))
 
-# PROCESS - Aggregation by ID ----
+## PROCESS - Aggregation by ID
 transformed_quadrats <- list()
 
 # Image's bins to proportions relative to total patient count
@@ -1075,8 +1076,9 @@ for (patient_id in unique(responses$ID)) {
   # Store grouped and aggregated data for the current patient
   grouped_quadrats[[as.character(patient_id)]] <- grouped_patient_data
 }
+cat("\014")
 
-# PROCESS - Aggregation by response group ----
+## PROCESS - Aggregation by response group
 grouped_by_response <- list()
 
 for (response_group in unique(responses$Response)) {
@@ -1118,9 +1120,9 @@ for (response_group in unique(responses$Response)) {
   # Store the grouped and aggregated data for the current response group
   grouped_by_response[[response_group]] <- grouped_response_data
 }
-
-selected_image <- SPIAT_tifs[1] #----
-# VISUALS - Density sampler of each response group (Density map) ----
+cat("\014")
+selected_image <- sample(SPIAT_tifs, 1) #----
+# Density map sampler per group ----
 # Order of response groups and immune markers
 response_order <- c("SD", "PD", "CR", "PR")
 marker_order <- c("CD8", "PD1", "CK", "TIM3", "CD3", "LAG3")
@@ -1199,12 +1201,12 @@ for (marker in marker_order) {
   }
 }
 
-# STATS - Quadrat analysis ----
+# Quadrat index comparison per group ----
 summary_table <- data.frame()
 
 for (marker in names(grouped_quadrats[[1]])) {
   
-  # Store data for KW and levene
+  # Store data for KW
   all_data <- list()
   
   for (response_group in unique(responses$Response)) {
@@ -1228,14 +1230,11 @@ for (marker in names(grouped_quadrats[[1]])) {
   # Group vector for KW
   group_vector <- as.vector(rep(names(all_data), sapply(all_data, nrow)))
   
-  # KW and Levene's to each bin (column in combined_matrix)
+  # KW to each bin (column in combined_matrix)
   for (bin_index in 1:ncol(combined_matrix)) {
     
     # Data of current bin
     bin_data <- combined_matrix[, bin_index]
-    
-    # Perform Levene's test
-    levene_result <- leveneTest(y = bin_data, group = as.factor(group_vector))$`Pr(>F)`[1]
     
     # Perform Kruskal-Wallis test
     kw_result <- kruskal.test(bin_data ~ group_vector)$p.value
@@ -1244,7 +1243,6 @@ for (marker in names(grouped_quadrats[[1]])) {
     temp_df <- data.frame(
       Marker = marker,
       Bin = bin_index,
-      Levene_p_value = levene_result,
       KW_p_value = kw_result
     )
     
@@ -1253,22 +1251,12 @@ for (marker in names(grouped_quadrats[[1]])) {
   }
 }
 
-# Sort summary table by FDR-adjusted
 summary_table <- summary_table %>% 
   arrange(KW_p_value) %>%
   filter(KW_p_value <= 0.05)
 
-summary_table
-
 # Dunn test
-dunn_results <- data.frame(
-  Marker = character(),
-  Bin = integer(),
-  Comparison = character(),
-  Z = numeric(),
-  P = numeric(),
-  Adj_P = numeric()
-)
+dunn_results <- data.frame()
 
 for (i in 1:nrow(summary_table)) {
   
@@ -1301,11 +1289,6 @@ for (i in 1:nrow(summary_table)) {
     
     # Append to the Dunn's table
     dunn_results <- rbind(dunn_results, temp_df)
-    
-  } else {
-    
-    # Skip
-    next
   }
 }
 
@@ -1314,9 +1297,7 @@ dunn_results <- dunn_results %>%
   arrange(Adj_P) %>%
   filter(Adj_P <= 0.05)
 
-dunn_results
-
-# VISUALS - Marker distribution per quadrat across groups (Quadrats) ----
+## VISUALS - Phenotype intensity per group subsetted by marker
 # Order of response groups and immune markers
 response_order <- c("SD", "PD", "CR", "PR")
 marker_order <- c("LAG3", "CD3", "TIM3", "CK", "PD1", "CD8")
@@ -1387,7 +1368,10 @@ marker_order %<>%
 column_positions <- seq(1/8, 1, by = 1/4)
 mtext(response_order, side = 3, line = -2, outer = TRUE, at = column_positions, cex = 1)
 
-# STATS - Complete Spatial Randomness (CSR) #----
+cat("\014")
+dunn_results
+
+# Complete Spatial Randomness (CSR) #----
 SpaFx <- data.frame(
   Image = character(0),
   PD1_CSR = numeric(0),
@@ -1408,7 +1392,7 @@ pval_df <- data.frame(
   CK_pval = numeric(0)
 )
 
-# Compare all ppps against homogenous Poisson distribution with MC simulations
+# Compare all ppps against inhomogeneous Poisson distribution with MC simulations
 for (i in seq_along(pointpatterns)) {
   image_name <- names(pointpatterns[i])
   pointpattern <- pointpatterns[[i]]
@@ -1471,8 +1455,9 @@ for (i in 1:nrow(SpaFx)) {
   }
 }
 
-head(SpaFx)
-head(pval_df)
+cat("\014")
+summary(SpaFx)
+summary(pval_df)
 
 # KW test function
 perform_kw_test <- function(df, markers, response_col = "R") {
@@ -1514,18 +1499,7 @@ kw_test_results <- perform_kw_test(SpaFx, markers, response_col)
 # Dunn test
 dunn_test_results <- perform_dunn_test(SpaFx, markers, response_col)
 
-# Clean everything in the console
-cat("\014")
-
-kw_test_results %>%
-  filter(P_Value <= 0.05) %>%
-  arrange(P_Value)
-
-dunn_test_results %>%
-  filter(P_adj <= 0.05) %>%
-  arrange(P_adj)
-
-# VISUALS - CSR (Heatmap) ----
+## VISUALS - CSR (Heatmap)
 long_SpaFx <- SpaFx %>%
   gather(key = "Marker", value = "CSR", PD1_CSR:CK_CSR) %>%
   filter(!is.na(CSR))  # Remove NAs
@@ -1619,7 +1593,19 @@ heatmaply(mat,
 
 dev.set(which = dev.prev())
 
-# STATS - Optimal number of bins ----
+
+# Clean everything in the console
+cat("\014")
+
+kw_test_results %>%
+  filter(P_Value <= 0.05) %>%
+  arrange(P_Value)
+
+dunn_test_results %>%
+  filter(P_adj <= 0.05) %>%
+  arrange(P_adj)
+
+# Optimal number of quadrats ----
 # User-provided data and information
 allX_list <- lapply(spiat_scattercount, function(x) x$X)
 allY_list <- lapply(spiat_scattercount, function(x) x$Y)
@@ -1684,11 +1670,11 @@ overall_bin_metrics <- do.call(rbind, result_list)
 # Stop the cluster
 stopCluster(cl)
 
-# VISUALS - Bin tests (Elbow plot) ----
+## VISUALS - Bin tests (Elbow plot)
 # Plot the results
 plot(overall_bin_metrics$BinNumber, overall_bin_metrics$OverallRSS, type="b", xlab="Number of Bins", ylab="Overall RSS")
-
-# STATS - Bandwidth testing ----
+cat("\014")
+# Bandwidth testing ----
 # Function to calculate optimal bandwidths for each image
 calculate_bandwidths <- function(image_name, df) {
   # Subset data for the current image
@@ -1721,7 +1707,7 @@ bandwidth_results <- parallel::parLapply(cl, image_names, function(image_name) {
   calculate_bandwidths(image_name, eda_df)
 })
 
-# VISUALS - Bandwidth tests (Histograms) ----
+## VISUALS - Bandwidth tests (Histograms)
 # Plot distribution of optimal bandwidths
 par(mfrow = c(5, 1))
 hist(sapply(bandwidth_results, function(x) x$bw_diggle), main = NULL, xlab = 'Bandwidth', breaks = 20)
@@ -1729,8 +1715,8 @@ hist(sapply(bandwidth_results, function(x) x$ppl), main = NULL, xlab = 'Bandwidt
 hist(sapply(bandwidth_results, function(x) x$cvl), main = NULL, xlab = 'Bandwidth', breaks = 20)
 hist(sapply(bandwidth_results, function(x) x$adpt), main = NULL, xlab = 'Bandwidth', breaks = 20)
 hist(unlist(sapply(bandwidth_results, function(x) x$abraham)), main = NULL, xlab = 'Bandwidth', breaks = 20)
-
-########################################### F3 - Marks -----
+cat("\014")
+############################################ F3 | Marks -----
 # EXTRACT - Extract intensity heatmaps ----
 spiat_scattercount <- list()
 
@@ -2024,7 +2010,7 @@ suppressWarnings({
   rm(bin_data, resultado, combined_data, response_data, tiled_markerheatmap_xID)
 })
 
-########################################### F4 - Distances -----
+############################################ F4 | Distances -----
 # EXTRACT - Cell distances ----
 # PROCESS - Picking phenotypes ----
 # Filtering phenotypes to chose
@@ -2373,3 +2359,5 @@ filtered_sorted_dunn_results <- dunn_test_results_df %>%
 # Print the filtered and sorted results
 print(filtered_sorted_dunn_results)
 
+
+############################################ Session info ----
