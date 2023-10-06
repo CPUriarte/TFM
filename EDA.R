@@ -32,7 +32,7 @@ raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep =
 # Raw associated clinical data
 responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
 
-# Formatting ----
+## Formatting
 # Treatment response dataset
 responses <- responses[, -c(4, 6:8)] # Eliminate unnecessary columns
 colnames(responses) <- c("ID", "Age", "Sex", "Response") # Set name to columns
@@ -72,32 +72,34 @@ cell_counts <- table(eda_df$ID)
 cell_counts<- as.data.frame(cell_counts)
 colnames(cell_counts) <- c("ID", "Cell_Count")
 cell_count_vector <- cell_counts$Cell_Count[match(responses$ID, cell_counts$ID)]
-responses$n_cells <- cell_count_vector
+responses$Total_cells <- cell_count_vector
 
 # Dropping non-evaluable patients
 responses$Response <- droplevels(responses$Response, "Not evaluable/NE")
 levels(responses$Response) <- c("CR", "PR", "PD", "SD")
 SPIAT_tifs <- unique(eda_df$Image) # Unique list of SPIAT curated images
 
+EDA <- eda_df
+
 # Clear intermediary variables
-rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector"))
+rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector", "eda_df"))
 
 # Clear console for results
 cat("\014")
 summary(responses)
-summary(eda_df[,c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")])
+summary(EDA[,c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")])
 
 # S1 | Number of cells ----
 cat("\014")
 
 # Number of cells per image (QQPLOT)
-eda_df %>%
+EDA %>%
   group_by(Image) %>%
   summarise(cell_count = n()) %>%
   {qqPlot(.$cell_count, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main="Number of Cells per Image")}
 
 # Number of cells per ID (QQPLOT)
-qqPlot(responses$n_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
+qqPlot(responses$Total_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
 
 # S2 | Age ----
 age_stats <- list()
@@ -135,7 +137,7 @@ print("Probability of having 10 males in a group given female to male ratio is 1
 age_fishertest$p.value
 
 # S4 | Marker intensity ----
-eda_by_ID <- eda_df %>%
+eda_by_ID <- EDA %>%
   group_by(ID) %>%
   summarise(
     DAPI = median(DAPI, na.rm = TRUE),
@@ -209,15 +211,6 @@ cd8_plot <- ggplot(eda_by_ID, aes(x=Response, y=CD8)) +
 combined_plot <- cowplot::plot_grid(cd3_plot, cd8_plot, ncol = 2)
 print(combined_plot)
 
-cat("\014")
-CD3_mIntensity_dunn %>%
-  filter(P.adj <= 0.05) %>% 
-  arrange(P.adj)
-
-CD8_mIntensity_dunn %>%
-  filter(P.adj <= 0.05) %>% 
-  arrange(P.adj)
-
 ## Z-score plot
 # Filter significant results from Dunn's test for CD3 and CD8
 sig_CD3_dunn <- CD3_mIntensity_dunn %>%
@@ -242,11 +235,19 @@ zscore_plot <- ggplot(sig_dunn_combined, aes(x = Comparison, y = Z, color = mark
 
 print(zscore_plot)
 
-# S5 | Custom phenotype prediction ----
 cat("\014")
+CD3_mIntensity_dunn %>%
+  filter(P.adj <= 0.05) %>% 
+  arrange(P.adj)
+
+CD8_mIntensity_dunn %>%
+  filter(P.adj <= 0.05) %>% 
+  arrange(P.adj)
+
+# S5 | Custom phenotype prediction ----
 ## Thresholding - V1 ----
 # Threshold dataset
-img_threshs <- eda_df %>% 
+img_threshs <- EDA %>% 
   dplyr::select(Image, ID) %>% 
   distinct() %>%
   mutate(
@@ -303,21 +304,21 @@ optimal_cutoff_valley <- function(intensity_values) {
 }
 
 # Summarize and compute the optimal cutoff based on valleys
-img_threshs <- eda_df %>%
+img_threshs <- EDA %>%
   group_by(Image) %>%
   summarise(across(c('PD1', 'CD8', 'CD3', 'TIM3', 'LAG3', 'CK'), 
                    ~optimal_cutoff_valley(.x),
                    .names = "cutoff_{.col}")) %>%
-  left_join(eda_df %>% distinct(Image, ID), by = "Image")
+  left_join(EDA %>% distinct(Image, ID), by = "Image")
 
-original_cols <- colnames(eda_df)
-merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
+original_cols <- colnames(EDA)
+merged_df <- merge(EDA, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
 cat("\014")
 ## Thresholding - V2 ----
-img_threshs <- eda_df %>% 
+img_threshs <- EDA %>% 
   select(Image, ID) %>% 
   distinct() %>%
   mutate(
@@ -399,15 +400,15 @@ optimal_cutoff_valley <- function(intensity_values) {
   }
 }
 
-img_threshs <- eda_df %>%
+img_threshs <- EDA %>%
   group_by(Image) %>%
   summarise(across(c('PD1', 'CD8', 'CD3', 'TIM3', 'LAG3', 'CK'), 
                    ~optimal_cutoff_valley(.x),
                    .names = "cutoff_{.col}")) %>%
-  left_join(eda_df %>% distinct(Image, ID), by = "Image")
+  left_join(EDA %>% distinct(Image, ID), by = "Image")
 
-original_cols <- colnames(eda_df)
-merged_df <- merge(eda_df, img_threshs, by="Image", all.x = TRUE)
+original_cols <- colnames(EDA)
+merged_df <- merge(EDA, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
@@ -499,8 +500,8 @@ p <- final_df_joined %>%
 ggplotly(p)
 
 ## VISUAL - Cutoff quality (IMAGES)
-long_eda_df <- eda_df[eda_df$Image == IMG, ] %>%
-  pivot_longer(cols = colnames(eda_df[, 6:11]), names_to = "marker", values_to = "intensity")
+long_eda_df <- EDA[EDA$Image == IMG, ] %>%
+  pivot_longer(cols = colnames(EDA[, 6:11]), names_to = "marker", values_to = "intensity")
 
 long_eda_df$cutoff <- sapply(1:nrow(long_eda_df), function(i) {
   img_threshs[img_threshs$Image == IMG, paste0("cutoff_", long_eda_df$marker[i])]
@@ -526,7 +527,7 @@ cp_pheno_counts <- data.frame(Image = unique(final_df$Image),
 
 colnames(cp_pheno_counts) <- c("Image", cp_unique_phenos)
 
-cp_pheno_counts$ID <- eda_df$ID[match(cp_pheno_counts$Image, eda_df$Image)]
+cp_pheno_counts$ID <- EDA$ID[match(cp_pheno_counts$Image, EDA$Image)]
 cp_pheno_counts$Response <- responses$Response[match(cp_pheno_counts$ID, responses$ID)]
 cp_current_cols <- setdiff(colnames(cp_pheno_counts), c("Image", "ID", "Response", "Undefined", "Tumor"))
 
