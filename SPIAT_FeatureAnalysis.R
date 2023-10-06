@@ -1,4 +1,10 @@
-############################################ Libraries ----
+# Overview ----
+# Title: SPIAT feature extraction analysis.
+# Date: 20/05/2023
+# Author: Cyril P
+# Director: Carlos de Andrea
+# Institution: University of Navarra
+# Libraries ----
 library(gridExtra)
 library(BBmisc)
 library(stats)
@@ -29,7 +35,7 @@ library(magrittr)
 library(fields)
 library(viridis)
 
-############################################ Loading ----
+# Load and format data ----
 # Raw measurements exported from QuPath
 raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
 
@@ -768,7 +774,25 @@ print(
     filter(P.adj <= 0.05) %>% 
     arrange(P.adj)
 )
-# Lacks updating results to be finished ----
+
+## DUNN'S TEST RESULTS
+filtered_data <- spiat_pheno_dunn %>% 
+  filter(P.adj <= 0.05) %>% 
+  arrange(P.adj)
+
+ggplot(filtered_data, aes(x = P.adj, y = reorder(Phenotype, P.adj), color = Comparison)) +
+  geom_point(size = 4) +
+  geom_text(aes(label = round(Z, 2)), hjust = -0.5, vjust = 0.5) +
+  labs(
+    title = "Dunn's Post-hoc Test Results",
+    x = "Adjusted P-value",
+    y = "Phenotypes",
+    color = "Comparison Groups"
+  ) +
+  theme_minimal()
+ggplotly(
+  p = ggplot2::last_plot())
+
 ############################################ F2 | Scatterplots -----
 ## PROCESS - Extract scatterplots
 spiat_scattercount <- list()
@@ -1300,7 +1324,7 @@ dunn_results <- dunn_results %>%
 ## VISUALS - Phenotype intensity per group subsetted by marker
 # Order of response groups and immune markers
 response_order <- c("SD", "PD", "CR", "PR")
-marker_order <- c("LAG3", "CD3", "TIM3", "CK", "PD1", "CD8")
+marker_order <- c("CD8", "PD1", "CK", "TIM3", "CD3", "LAG3")
 
 # Min and max of each marker
 marker_min_max <- marker_order %>%
@@ -1716,7 +1740,7 @@ hist(sapply(bandwidth_results, function(x) x$cvl), main = NULL, xlab = 'Bandwidt
 hist(sapply(bandwidth_results, function(x) x$adpt), main = NULL, xlab = 'Bandwidth', breaks = 20)
 hist(unlist(sapply(bandwidth_results, function(x) x$abraham)), main = NULL, xlab = 'Bandwidth', breaks = 20)
 cat("\014")
-############################################ F3 | Marks -----
+############################################ F3 | Heatmaps -----
 # EXTRACT - Extract intensity heatmaps ----
 spiat_scattercount <- list()
 

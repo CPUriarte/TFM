@@ -23,7 +23,7 @@ library(spatstat)
 library(igraph)
 library(ggdist) # Applies genlog scale to ggplot values and colors
 library(yarrr) # Pirate plots
-# Load data ----
+# Load and format data ----
 cat("\014")
 
 # Raw measurements exported from QuPath
@@ -260,7 +260,7 @@ img_threshs <- eda_df %>%
 
 rownames(img_threshs) <- NULL
 
-# Define the optimal cutoff function using valleys of density
+# Custom optimal cutoff function using valleys of density
 optimal_cutoff_valley <- function(intensity_values) {
   
   intensity_density <- stats::density(intensity_values, na.rm=TRUE)
@@ -302,7 +302,7 @@ optimal_cutoff_valley <- function(intensity_values) {
   return(valley_df$valley_xcords[1])
 }
 
-# Use dplyr to group, summarize and compute the optimal cutoff based on valleys
+# Summarize and compute the optimal cutoff based on valleys
 img_threshs <- eda_df %>%
   group_by(Image) %>%
   summarise(across(c('PD1', 'CD8', 'CD3', 'TIM3', 'LAG3', 'CK'), 
@@ -335,7 +335,7 @@ optimal_cutoff_valley <- function(intensity_values) {
   
   intensity_density <- stats::density(intensity_values, na.rm=TRUE)
   
-  # Compute the differences
+  # Compute differences
   nabla_f <- diff(intensity_density$y)
   nabla_2f <- diff(nabla_f)
   
@@ -344,16 +344,15 @@ optimal_cutoff_valley <- function(intensity_values) {
   max_val <- max(nabla_2f)
   w_v <- (nabla_2f - min_val) / (max_val - min_val)
   
-  # Identify valleys in the original histogram using peaks in w_v
+  # Identify valleys using peaks in w_v
   valleys <- pracma::findpeaks(w_v)
-  
-  # Assuming you still want to work with the highest peaks logic:
+
   # Sort peaks to find the highest ones
   peaks_df <- data.frame(x = intensity_density$x[-c(1, length(intensity_density$x))], 
                          w_v) %>%
     arrange(desc(w_v))
   
-  # Get highest peak (now corresponds to the most prominent valley in original)
+  # Get highest peak (corresponds to most prominent valley in original)
   highest_valley <- peaks_df$w_v[1]
   
   if (length(peaks_df)<2) {
@@ -386,7 +385,7 @@ optimal_cutoff_valley <- function(intensity_values) {
       }
     }
     
-    # Determine the cutoff based on the first valley after the highest peak
+    # Determine cutoff based on first valley after highest peak
     ycord_max_density <- max(intensity_density$y)
     xcord_max_density <- intensity_density$x[match(ycord_max_density, intensity_density$y)]
     valley_df <- data.frame(valley_xcords, valley_ycords) %>%
@@ -395,13 +394,11 @@ optimal_cutoff_valley <- function(intensity_values) {
     
     return(valley_df$valley_xcords[1])
   }else{
-  
-  # You can adjust this logic based on how you want to use this metric for thresholding
+    
   return(peaks_df$x[1])
   }
 }
 
-# Use dplyr to group, summarize and compute the optimal cutoff based on valleys
 img_threshs <- eda_df %>%
   group_by(Image) %>%
   summarise(across(c('PD1', 'CD8', 'CD3', 'TIM3', 'LAG3', 'CK'), 
@@ -423,8 +420,7 @@ for(marker in immune_markers) {
   merged_df[, marker] <- ifelse(merged_df[, marker] >= merged_df[, cutoff_col], 1, 0)
 }
 
-cat("\014")
-## PROCESSING - Handling superposition (Step 2/3)
+## PROCESSING - Handling superposition cases (Step 2/3)
 # Add a column for duplicate identification
 # CK adjustments
 result <- pbapply(merged_df, 1, function(row) {
@@ -487,6 +483,7 @@ final_df_joined <- final_df %>%
 # Remove intermediate variables
 rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, phenotype_strings)
 cat("\014")
+
 ## Sample image with predicted phenotypes ----
 IMG <- sample(SPIAT_tifs, size = 1)
 
