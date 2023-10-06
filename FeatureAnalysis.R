@@ -109,7 +109,7 @@ levels(responses$Response) <- c("CR", "PR", "PD", "SD")
 # Cleaning memory
 suppressWarnings(rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector")))
 cat("\014")
-############################################ SPIAT ----
+# SPIAT package modules ----
 # 1. Create a spatial object ----
 # Select image subset
 selected_image <- SPIAT_tifs[65]
@@ -473,7 +473,7 @@ average_nearest_neighbor_index(
   feature_colname="Cell.Type", 
   p_val = 0.05)
 
-############################################ F1 | Predicted phenotypes -----
+# F1 | Predicted phenotypes -----
 ## PROCESS - Extraction and formatting
 spiat_predicted_phenotypes <- list()
 
@@ -793,7 +793,7 @@ ggplot(filtered_data, aes(x = P.adj, y = reorder(Phenotype, P.adj), color = Comp
 ggplotly(
   p = ggplot2::last_plot())
 
-############################################ F2 | Scatterplots -----
+# F2 | Scatterplots -----
 ## PROCESS - Extract scatterplots
 spiat_scattercount <- list()
 
@@ -2384,4 +2384,4 @@ filtered_sorted_dunn_results <- dunn_test_results_df %>%
 print(filtered_sorted_dunn_results)
 
 
-############################################ Session info ----
+# Session info ----
