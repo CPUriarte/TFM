@@ -23,96 +23,37 @@ library(spatstat)
 library(igraph)
 library(ggdist) # Applies genlog scale to ggplot values and colors
 library(yarrr) # Pirate plots
-# Load and format data ----
-cat("\014")
+# Load data ----
+# Point Patterns
+IntensityMatrix<- read.csv("Data/IntensityMatrix.csv", header = TRUE, sep = ",")
 
-# Raw measurements exported from QuPath
-raw_measurements <- read.table("Data/raw_measurements.tsv", header = TRUE, sep = "\t")
-
-# Raw associated clinical data
-responses <- read.csv("Data/Responses.csv", header = TRUE, sep = ",")
-
-## Formatting
-# Treatment response dataset
-responses <- responses[, -c(4, 6:8)] # Eliminate unnecessary columns
-colnames(responses) <- c("ID", "Age", "Sex", "Response") # Set name to columns
-responses$ID <- sub("^0", "", responses$ID) # Eliminate 0 suffix to compare to eda_df
-responses$Response <- factor(responses$Response)
-responses$Sex <- factor(responses$Sex)
-
-# Exploratory dataset
-eda_df <- raw_measurements
-colnames(eda_df) <- c("Image", "X", "Y", "DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
-rownames(eda_df) <- str_c("Cell", as.character(1: nrow(eda_df)), sep = "_")
-
-# Correct NAs
-summary(eda_df) # Summarise data
-NAs <- is.na(eda_df) # Find NAs
-images_with_NAs <- unique(eda_df$Image[rowSums(NAs) > 0]) # Find images NAs come from
-eda_df <- eda_df[!eda_df$Image %in% images_with_NAs, ] # Remove images with NAs
-
-# Match response groups to exploratory dataset
-eda_df$ID <- gsub(".*?(\\d{3}|\\d{4})\\.tif", "\\1", eda_df$Image) # Extract patient ID pt 1/2
-eda_df$ID <- as.numeric(eda_df$ID) # Extract patient ID pt 2/2
-response_vector <- responses$Response[match(eda_df$ID, responses$ID)] # Match response to patient ID
-eda_df$Response <- response_vector
-
-# Delete groups that are not evaluable
-responses$ID <- as.numeric(responses$ID)
-eda_df <- eda_df[eda_df$Response != "Not evaluable/NE", ]
-responses <- responses[responses$Response != "Not evaluable/NE", ]
-
-# Finish formatting
-eda_df <- eda_df[, -ncol(eda_df)]
-new_order <- c("Image", "X", "Y", "ID", "DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")
-eda_df <- eda_df[, new_order]
-
-# Counting the number of cells per TIFF and binding it to the response dataset
-cell_counts <- table(eda_df$ID)
-cell_counts<- as.data.frame(cell_counts)
-colnames(cell_counts) <- c("ID", "Cell_Count")
-cell_count_vector <- cell_counts$Cell_Count[match(responses$ID, cell_counts$ID)]
-responses$Total_cells <- cell_count_vector
-
-# Dropping non-evaluable patients
-responses$Response <- droplevels(responses$Response, "Not evaluable/NE")
-levels(responses$Response) <- c("CR", "PR", "PD", "SD")
-SPIAT_tifs <- unique(eda_df$Image) # Unique list of SPIAT curated images
-
-EDA <- eda_df
-
-# Clear intermediary variables
-rm(list = c("cell_counts", "NAs", "cell_count_vector", "images_with_NAs", "new_order", "response_vector", "eda_df"))
-
-# Clear console for results
-cat("\014")
-summary(responses)
-summary(EDA[,c("DAPI", "PD1", "CD8", "CD3", "TIM3", "LAG3", "CK")])
+# Clinical data
+ClinicalData <- read.csv("Data/ClinicalData.csv", header = TRUE, sep = ",")
 
 # S1 | Number of cells ----
 cat("\014")
 
 # Number of cells per image (QQPLOT)
-EDA %>%
+IntensityMatrix %>%
   group_by(Image) %>%
   summarise(cell_count = n()) %>%
   {qqPlot(.$cell_count, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main="Number of Cells per Image")}
 
 # Number of cells per ID (QQPLOT)
-qqPlot(responses$Total_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
+qqPlot(ClinicalData$Total_cells, dist = "norm", xlab = "Quantiles", ylab = "Number of Cells", main = "Number of Cells Per Patient")
 
 # S2 | Age ----
 age_stats <- list()
-age_stats$residuals <- residuals(aov(Age ~ Response, data=responses))
+age_stats$residuals <- residuals(aov(Age ~ Response, data=ClinicalData))
 shapiro.test(age_stats$residuals)
 
-age_stats$levene <- leveneTest(Age ~ Response, data=responses)
+age_stats$levene <- leveneTest(Age ~ Response, data=ClinicalData)
 
 age_stats$levene$`Pr(>F)`[1]
 
-age_stats$aov <- aov(Age ~ Response, data=responses)
+age_stats$aov <- aov(Age ~ Response, data=ClinicalData)
 
-responses %>%
+ClinicalData %>%
   group_by(ID) %>%
   ggplot(aes(x = Age)) +
   geom_histogram(aes(y = ..density..), fill = "steelblue", color = "white", bins = 30) +
@@ -126,7 +67,7 @@ summary(age_stats$aov)
 
 # S3 | Sex ----
 # Fisher exact test
-age_fishertest <- fisher.test(table(responses$Sex, responses$Response))
+age_fishertest <- fisher.test(table(ClinicalData$Sex, ClinicalData$Response))
 
 # Hypergeometric test - LaTeX: P(X=k) = \frac{\binom{N}{n} \binom{M}{k} \binom{N-M}{n-k}}{\binom{N}{n}}
 cat("\014")
@@ -137,7 +78,7 @@ print("Probability of having 10 males in a group given female to male ratio is 1
 age_fishertest$p.value
 
 # S4 | Marker intensity ----
-eda_by_ID <- EDA %>%
+eda_by_ID <- IntensityMatrix %>%
   group_by(ID) %>%
   summarise(
     DAPI = median(DAPI, na.rm = TRUE),
@@ -150,7 +91,7 @@ eda_by_ID <- EDA %>%
   )
 
 eda_by_ID <- eda_by_ID %>%
-  mutate(Response = responses$Response[match(ID, responses$ID)]) %>%
+  mutate(Response = ClinicalData$Response[match(ID, ClinicalData$ID)]) %>%
   select(ID, Response, everything())
 
 # STATISTICS - Marker intensity comparison across response
@@ -247,7 +188,7 @@ CD8_mIntensity_dunn %>%
 # S5 | Custom phenotype prediction ----
 ## Thresholding - V1 ----
 # Threshold dataset
-img_threshs <- EDA %>% 
+img_threshs <- IntensityMatrix %>% 
   dplyr::select(Image, ID) %>% 
   distinct() %>%
   mutate(
@@ -304,21 +245,21 @@ optimal_cutoff_valley <- function(intensity_values) {
 }
 
 # Summarize and compute the optimal cutoff based on valleys
-img_threshs <- EDA %>%
+img_threshs <- IntensityMatrix %>%
   group_by(Image) %>%
   summarise(across(c('PD1', 'CD8', 'CD3', 'TIM3', 'LAG3', 'CK'), 
                    ~optimal_cutoff_valley(.x),
                    .names = "cutoff_{.col}")) %>%
-  left_join(EDA %>% distinct(Image, ID), by = "Image")
+  left_join(IntensityMatrix %>% distinct(Image, ID), by = "Image")
 
-original_cols <- colnames(EDA)
-merged_df <- merge(EDA, img_threshs, by="Image", all.x = TRUE)
+original_cols <- colnames(IntensityMatrix)
+merged_df <- merge(IntensityMatrix, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
 cat("\014")
 ## Thresholding - V2 ----
-img_threshs <- EDA %>% 
+img_threshs <- IntensityMatrix %>% 
   select(Image, ID) %>% 
   distinct() %>%
   mutate(
@@ -400,15 +341,15 @@ optimal_cutoff_valley <- function(intensity_values) {
   }
 }
 
-img_threshs <- EDA %>%
+img_threshs <- IntensityMatrix %>%
   group_by(Image) %>%
   summarise(across(c('PD1', 'CD8', 'CD3', 'TIM3', 'LAG3', 'CK'), 
                    ~optimal_cutoff_valley(.x),
                    .names = "cutoff_{.col}")) %>%
-  left_join(EDA %>% distinct(Image, ID), by = "Image")
+  left_join(IntensityMatrix %>% distinct(Image, ID), by = "Image")
 
-original_cols <- colnames(EDA)
-merged_df <- merge(EDA, img_threshs, by="Image", all.x = TRUE)
+original_cols <- colnames(IntensityMatrix)
+merged_df <- merge(IntensityMatrix, img_threshs, by="Image", all.x = TRUE)
 names(merged_df)[names(merged_df) == "ID.x"] <- "ID"
 merged_df$ID.y <- NULL
 
@@ -477,9 +418,9 @@ phenotype_strings[phenotype_strings == ""] <- "Undefined"
 # Add phenotype column to the dataframe
 final_df$Phenotype <- phenotype_strings
 
-# Join final_df and responses
+# Join final_df and ClinicalData
 final_df_joined <- final_df %>%
-  left_join(responses, by = "ID")
+  left_join(ClinicalData, by = "ID")
 
 # Remove intermediate variables
 rm(cutoff_col, duplicate_rows, merged_df, original_rows, original_cols, result, phenotype_strings)
@@ -500,8 +441,8 @@ p <- final_df_joined %>%
 ggplotly(p)
 
 ## VISUAL - Cutoff quality (IMAGES)
-long_eda_df <- EDA[EDA$Image == IMG, ] %>%
-  pivot_longer(cols = colnames(EDA[, 6:11]), names_to = "marker", values_to = "intensity")
+long_eda_df <- IntensityMatrix[IntensityMatrix$Image == IMG, ] %>%
+  pivot_longer(cols = colnames(IntensityMatrix[, 6:11]), names_to = "marker", values_to = "intensity")
 
 long_eda_df$cutoff <- sapply(1:nrow(long_eda_df), function(i) {
   img_threshs[img_threshs$Image == IMG, paste0("cutoff_", long_eda_df$marker[i])]
@@ -527,8 +468,8 @@ cp_pheno_counts <- data.frame(Image = unique(final_df$Image),
 
 colnames(cp_pheno_counts) <- c("Image", cp_unique_phenos)
 
-cp_pheno_counts$ID <- EDA$ID[match(cp_pheno_counts$Image, EDA$Image)]
-cp_pheno_counts$Response <- responses$Response[match(cp_pheno_counts$ID, responses$ID)]
+cp_pheno_counts$ID <- IntensityMatrix$ID[match(cp_pheno_counts$Image, IntensityMatrix$Image)]
+cp_pheno_counts$Response <- ClinicalData$Response[match(cp_pheno_counts$ID, ClinicalData$ID)]
 cp_current_cols <- setdiff(colnames(cp_pheno_counts), c("Image", "ID", "Response", "Undefined", "Tumor"))
 
 get_primary_weight <- function(col) {
@@ -604,8 +545,8 @@ cp_long_with_props <- cp_long_format %>%
   inner_join(cp_total_cells_per_ID, by = "ID") %>%
   mutate(cp_Prop = cp_PhenotypeCount / cp_TotalCells)
 
-# Assign responses
-cp_long_with_props$cp_Response <- responses$Response[match(cp_long_with_props$ID, responses$ID)]
+# Assign ClinicalData
+cp_long_with_props$cp_Response <- ClinicalData$Response[match(cp_long_with_props$ID, ClinicalData$ID)]
 
 cp_long_with_props$cp_Response <- factor(
   cp_long_with_props$cp_Response,
