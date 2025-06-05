@@ -13,6 +13,6 @@ Clinica Universidad de Navarra
 Pamplona, Spain  
 
 ### **Author**
-Cyril Puyo, M.D., M.Sc.  
+Cyril Puyo Uriarte, M.D., M.Sc.  
 University of Navarra  
 Pamplona, Spain  
