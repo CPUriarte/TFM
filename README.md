@@ -7,12 +7,12 @@
 `SPIAT_FeatureAnalysis.R` - Contains an extraction analysis of SPIAT's features.
 
 ### **Director**
-Carlos E. De Andrea, M.D., Ph.D.    
+Carlos E. De Andrea, MD PhD.    
 Full Professor in Pathology, Anatomy, and Physiology   
 Clinica Universidad de Navarra  
 Pamplona, Spain  
 
 ### **Author**
-Cyril Puyo Uriarte, M.D., M.Sc.  
+Cyril Puyo Uriarte, MD MSc.  
 University of Navarra  
 Pamplona, Spain  
